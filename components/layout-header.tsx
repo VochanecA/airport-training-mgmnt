@@ -6,7 +6,7 @@ import { useAuth } from "@/components/public-auth-provider"
 import { GraduationCap, Menu } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { usePathname } from "next/navigation"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 import { useState } from "react"
 
 export function LayoutHeader() {
@@ -45,7 +45,7 @@ export function LayoutHeader() {
         <div className="flex items-center gap-2">
           <Link href="/" className="flex items-center gap-2">
             <GraduationCap className="h-6 w-6 text-primary" />
-            <span className="font-bold text-lg hidden sm:inline-block">
+            <span className="font-bold text-base sm:text-lg">
               Airport Training System
             </span>
           </Link>
@@ -99,6 +99,9 @@ export function LayoutHeader() {
               </Button>
             </SheetTrigger>
             <SheetContent>
+              {/* Dodajemo SheetTitle za pristupačnost */}
+              <SheetTitle className="sr-only">Navigacioni meni</SheetTitle>
+              
               <div className="flex flex-col gap-6 mt-6">
                 {/* Logo and Brand */}
                 <div className="flex items-center gap-2 mb-2">
@@ -125,7 +128,7 @@ export function LayoutHeader() {
                 {/* Divider */}
                 <div className="border-t pt-4">
                   <div className="space-y-4">
-                    {/* Theme Toggle in Mobile Menu (opciono - možete ukloniti jer je već u headeru) */}
+                    {/* Theme Toggle in Mobile Menu */}
                     <div className="px-3">
                       <p className="text-sm font-medium mb-2">Izgled</p>
                       <div className="flex justify-start">

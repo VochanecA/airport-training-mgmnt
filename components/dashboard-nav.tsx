@@ -50,8 +50,14 @@ export function DashboardNav() {
   const NavContent = ({ isMobile = false }: { isMobile?: boolean }) => (
     <>
       <div className="flex items-center gap-2 px-6 py-4 border-b">
-        <GraduationCap className="h-6 w-6 text-primary" />
-        <span className="font-semibold text-lg">Airport Training Management - Galiot Copy</span>
+        <Link 
+          href="/dashboard" 
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          onClick={() => setOpen(false)}
+        >
+          <GraduationCap className="h-6 w-6 text-primary" />
+          <span className="font-semibold text-lg">Airport Training Management - Galiot Copy</span>
+        </Link>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">
@@ -114,8 +120,14 @@ export function DashboardNav() {
       {/* Mobile Navigation */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-background border-b px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <GraduationCap className="h-6 w-6 text-primary" />
-          <span className="font-semibold truncate">Airport Training</span>
+          <Link 
+            href="/dashboard" 
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            onClick={() => setOpen(false)}
+          >
+            <GraduationCap className="h-6 w-6 text-primary" />
+            <span className="font-semibold truncate">Airport Training</span>
+          </Link>
         </div>
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>

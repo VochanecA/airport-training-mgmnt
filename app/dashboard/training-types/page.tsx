@@ -242,7 +242,7 @@ export default function TrainingTypesPage() {
         <Card className="border-blue-200 dark:border-blue-800">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              Ukupno tipova
+              Ukupno tipova obuka
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -255,7 +255,7 @@ export default function TrainingTypesPage() {
         <Card className="border-green-200 dark:border-green-800">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
-              Aktivni tipovi
+              Aktivni tipovi obuka
             </CardTitle>
           </CardHeader>
           <CardContent>

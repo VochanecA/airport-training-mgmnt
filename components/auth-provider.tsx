@@ -77,8 +77,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // 1. Optimistički clear lokalni state
       setUser(null)
       
-      // 2. Odmah redirect na login
-      window.location.href = "/login"
+      // 2. Odmah redirect na login---stavio sam na home
+      window.location.href = "/"
       
       // 3. Pokreni signout u pozadini
       setTimeout(async () => {
