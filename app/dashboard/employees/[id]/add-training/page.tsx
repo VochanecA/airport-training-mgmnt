@@ -51,7 +51,7 @@ export default function AddTrainingPage() {
         
         // Učitaj zaposlenog
         const { data: staffData, error: staffError } = await supabase
-          .from("employees")
+          .from("staff")
           .select("id, first_name, last_name, employee_number")
           .eq("id", params.id)
           .single()
@@ -87,55 +87,56 @@ export default function AddTrainingPage() {
     return date.toISOString().split('T')[0]
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setSaving(true)
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault()
+  setError("")
+  setSaving(true)
 
-    try {
-      if (!formData.training_type_id) {
-        throw new Error("Odaberite tip obuke")
-      }
-
-      const selectedTraining = trainingTypes.find(t => t.id === formData.training_type_id)
-      if (!selectedTraining) {
-        throw new Error("Odabrana obuka ne postoji")
-      }
-
-      const expiresDate = calculateExpiryDate(
-        formData.completed_date,
-        selectedTraining.validity_months || 12
-      )
-
-      // Dodaj obuku zaposlenom
-      const { error: insertError } = await supabase
-        .from("staff_trainings")
-        .insert({
-          staff_id: params.id,
-          training_type_id: formData.training_type_id,
-          completed_date: formData.completed_date,
-          expires_date: expiresDate,
-          notes: formData.notes || null,
-          status: 'valid'
-        })
-
-      if (insertError) {
-        if (insertError.code === '23505') {
-          throw new Error("Ovaj zaposleni već ima ovu obuku")
-        }
-        throw insertError
-      }
-
-      // Vrati se na profil zaposlenog
-      router.push(`/dashboard/employees/${params.id}`)
-      router.refresh()
-
-    } catch (err: any) {
-      setError(err.message || "Došlo je do greške pri čuvanju obuke")
-    } finally {
-      setSaving(false)
+  try {
+    if (!formData.training_type_id) {
+      throw new Error("Odaberite tip obuke")
     }
+
+    const selectedTraining = trainingTypes.find(t => t.id === formData.training_type_id)
+    if (!selectedTraining) {
+      throw new Error("Odabrana obuka ne postoji")
+    }
+
+    const expiresDate = calculateExpiryDate(
+      formData.completed_date,
+      selectedTraining.validity_months || 12
+    )
+
+    // Dodaj obuku zaposlenom
+    const { error: insertError } = await supabase
+      .from("training_certificate_records")
+      .insert({
+        staff_id: params.id,
+        training_master_id: formData.training_type_id, // Ovo može biti training_type_id
+        completion_date: formData.completed_date, // Promenjeno sa completed_date na completion_date
+        expiry_date: expiresDate,
+        issue_date: formData.completed_date, // Dodato: datum izdavanja je isti kao datum završetka
+        notes: formData.notes || null,
+        status: 'valid'
+      })
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        throw new Error("Ovaj zaposleni već ima ovu obuku")
+      }
+      throw insertError
+    }
+
+    // Vrati se na profil zaposlenog
+    router.push(`/dashboard/employees/${params.id}`)
+    router.refresh()
+
+  } catch (err: any) {
+    setError(err.message || "Došlo je do greške pri čuvanju obuke")
+  } finally {
+    setSaving(false)
   }
+}
 
   if (loading) {
     return (

@@ -133,73 +133,152 @@ export default function NewStaffPage() {
     loadPositionsAndTrainings()
   }, [supabase])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
+  
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault()
+  setError("")
+  setLoading(true)
 
-    try {
-      // 1. Prvo kreirajte osoblje (staff)
-      const { data: staffData, error: staffError } = await supabase
-        .from("staff")
-        .insert([{
-          employee_number: formData.employee_number,
-          first_name: formData.first_name,
-          last_name: formData.last_name,
-          email: formData.email || null,
-          phone: formData.phone || null,
-          position_id: formData.position_id || null,
-          staff_type: formData.staff_type,
-          status: formData.status,
-          hire_date: formData.hire_date,
-          termination_date: formData.termination_date || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }])
-        .select()
+  try {
+    // 1. Prvo kreirajte osoblje (staff)
+    const { data: staffData, error: staffError } = await supabase
+      .from("staff")
+      .insert([{
+        employee_number: formData.employee_number,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        email: formData.email || null,
+        phone: formData.phone || null,
+        position_id: formData.position_id || null,
+        staff_type: formData.staff_type,
+        status: formData.status,
+        hire_date: formData.hire_date,
+        termination_date: formData.termination_date || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }])
+      .select()
 
-      if (staffError) {
-        console.error("Error creating staff:", staffError)
-        throw staffError
+    if (staffError) {
+      console.error("Error creating staff:", staffError)
+      throw staffError
+    }
+
+    const staffId = staffData?.[0]?.id
+    if (!staffId) throw new Error("Failed to create staff member")
+
+    // 2. Dodajte zahteve za obuke za poziciju (samo ako je pozicija izabrana)
+    if (formData.position_id && formData.required_trainings.length > 0) {
+      // Dodajte ovu funkciju da provjerite i dobijete training_master_id
+      const getTrainingMasterId = async (trainingTypeId: string): Promise<string | null> => {
+        try {
+          // Prvo provjerite da li postoji master zapis za ovaj training_type
+          const { data: existingMaster, error } = await supabase
+            .from("training_certificates_master")
+            .select("id")
+            .eq("type_id", trainingTypeId)
+            .maybeSingle()
+
+          if (error) {
+            console.error("Error checking master:", error)
+            return null
+          }
+
+          if (existingMaster) {
+            return existingMaster.id
+          }
+
+          // Ako ne postoji, kreirajte ga
+          // Prvo dobijte podatke o training_type
+          const { data: trainingType, error: typeError } = await supabase
+            .from("training_types")
+            .select("*")
+            .eq("id", trainingTypeId)
+            .single()
+
+          if (typeError) {
+            console.error("Error getting training type:", typeError)
+            return null
+          }
+
+          // Kreirajte master zapis
+          const { data: newMaster, error: createError } = await supabase
+            .from("training_certificates_master")
+            .insert([{
+              code: trainingType.code,
+              title: trainingType.name,
+              description: trainingType.description,
+              duration_hours: trainingType.hours_initial_total || 0,
+              validity_months: trainingType.validity_period_months ? Math.round(trainingType.validity_period_months) : null,
+              is_mandatory: trainingType.is_mandatory || true,
+              is_active: trainingType.is_active,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }])
+            .select()
+            .single()
+
+          if (createError) {
+            console.error("Error creating master:", createError)
+            return null
+          }
+
+          // Update master sa type_id
+          await supabase
+            .from("training_certificates_master")
+            .update({ type_id: trainingTypeId })
+            .eq("id", newMaster.id)
+
+          return newMaster.id
+        } catch (err) {
+          console.error("Error in getTrainingMasterId:", err)
+          return null
+        }
       }
 
-      const staffId = staffData?.[0]?.id
-      if (!staffId) throw new Error("Failed to create staff member")
+      // Dobijte master ID-jeve za sve odabrane treninge
+      const masterRequirements = []
+      
+      for (const trainingTypeId of formData.required_trainings) {
+        const masterId = await getTrainingMasterId(trainingTypeId)
+        
+        if (masterId) {
+          masterRequirements.push({
+            position_id: formData.position_id,
+            training_master_id: masterId, // Koristimo training_master_id
+            is_mandatory: true,
+            created_at: new Date().toISOString()
+            // NEMA updated_at polje!
+          })
+        }
+      }
 
-      // 2. Dodajte zahteve za obuke za poziciju (samo ako je pozicija izabrana)
-      if (formData.position_id && formData.required_trainings.length > 0) {
-        const positionRequirements = formData.required_trainings.map(trainingTypeId => ({
-          position_id: formData.position_id,
-          training_type_id: trainingTypeId,
-          is_mandatory: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }))
-
+      if (masterRequirements.length > 0) {
         const { error: requirementsError } = await supabase
           .from("position_required_training")
-          .insert(positionRequirements)
+          .insert(masterRequirements)
 
         if (requirementsError) {
           console.error("Error adding training requirements:", requirementsError)
           // Ne bacajte grešku, samo logujte
         }
       }
-
-      // 3. Preusmerite na listu zaposlenih
-      router.push("/dashboard/employees")
-      router.refresh()
-    } catch (err: unknown) {
-      console.error("Full error:", err)
-      if (err instanceof Error) {
-        setError(err.message || "Došlo je do greške pri čuvanju zaposlenog")
-      } else {
-        setError("Došlo je do nepoznate greške pri čuvanju zaposlenog")
-      }
-    } finally {
-      setLoading(false)
     }
+
+    // 3. Preusmerite na listu zaposlenih
+    router.push("/dashboard/employees")
+    router.refresh()
+  } catch (err: unknown) {
+    console.error("Full error:", err)
+    if (err instanceof Error) {
+      setError(err.message || "Došlo je do greške pri čuvanju zaposlenog")
+    } else {
+      setError("Došlo je do nepoznate greške pri čuvanju zaposlenog")
+    }
+  } finally {
+    setLoading(false)
   }
+}
 
   // Funkcija za kreiranje nove pozicije
   const handleCreateNewPosition = async () => {

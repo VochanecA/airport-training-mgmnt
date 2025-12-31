@@ -21,7 +21,9 @@ import {
   Filter,
   ArrowUpDown,
   CheckCircle,
-  XCircle
+  XCircle,
+  CheckSquare,
+  Square
 } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -39,6 +41,20 @@ interface WorkingPosition {
   staff_count?: number
 }
 
+interface TrainingType {
+  id: string
+  code: string
+  name: string
+  category?: string
+  training_type?: string
+  is_mandatory?: boolean
+  validity_period_months?: number
+  hours_initial_total?: number
+  hours_recurrent_total?: number
+  hours_ojt_total?: number
+  is_active: boolean
+}
+
 export default function PositionsPage() {
   const router = useRouter()
   const supabase = getSupabaseBrowserClient()
@@ -54,6 +70,19 @@ export default function PositionsPage() {
   const [editingPosition, setEditingPosition] = useState<WorkingPosition | null>(null)
   const [modalLoading, setModalLoading] = useState(false)
   const [modalError, setModalError] = useState("")
+
+  // Za modal za dodavanje obaveznih obuka
+  const [showTrainingsModal, setShowTrainingsModal] = useState(false)
+  const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null)
+  const [trainingTypes, setTrainingTypes] = useState<TrainingType[]>([])
+  const [selectedTrainings, setSelectedTrainings] = useState<string[]>([])
+  const [trainingsModalLoading, setTrainingsModalLoading] = useState(false)
+  const [trainingsModalError, setTrainingsModalError] = useState("")
+  const [trainingsModalSuccess, setTrainingsModalSuccess] = useState("")
+  
+  // Filteri za modal
+  const [filterTrainingCategory, setFilterTrainingCategory] = useState<string>("all")
+  const [filterTrainingType, setFilterTrainingType] = useState<string>("all")
 
   const [formData, setFormData] = useState({
     code: "",
@@ -115,6 +144,237 @@ export default function PositionsPage() {
     loadPositions()
   }, [])
 
+  // Učitavanje tipova obuka
+  const loadTrainingTypes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("training_types")
+        .select("*")
+        .eq("is_active", true)
+        .order("name")
+
+      if (error) throw error
+      return data || []
+    } catch (err) {
+      console.error("Error loading training types:", err)
+      return []
+    }
+  }
+
+  // Učitavanje obaveznih obuka za poziciju
+  const loadRequiredTrainings = async (positionId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("position_required_training")
+        .select("training_master_id")
+        .eq("position_id", positionId)
+
+      if (error) throw error
+      
+      return data?.map(item => item.training_master_id) || []
+    } catch (err) {
+      console.error("Error loading required trainings:", err)
+      return []
+    }
+  }
+
+  // Otvori modal za dodavanje obaveznih obuka
+  const handleOpenTrainingsModal = async (positionId: string) => {
+    try {
+      setSelectedPositionId(positionId)
+      setTrainingsModalLoading(true)
+      setTrainingsModalError("")
+      setTrainingsModalSuccess("")
+      
+      // Učitaj sve tipove obuka
+      const trainings = await loadTrainingTypes()
+      setTrainingTypes(trainings)
+      
+      // Učitaj trenutno odabrane obuke za ovu poziciju
+      const requiredTrainings = await loadRequiredTrainings(positionId)
+      setSelectedTrainings(requiredTrainings)
+      
+      setShowTrainingsModal(true)
+    } catch (err: any) {
+      console.error("Error opening trainings modal:", err)
+      setTrainingsModalError(err.message || "Došlo je do greške pri učitavanju obuka")
+    } finally {
+      setTrainingsModalLoading(false)
+    }
+  }
+
+  // Sačuvaj obavezne obuke za poziciju
+const handleSaveRequiredTrainings = async () => {
+  if (!selectedPositionId) return
+  
+  setTrainingsModalLoading(true)
+  setTrainingsModalError("")
+  setTrainingsModalSuccess("")
+
+  try {
+    console.log("Saving trainings for position:", selectedPositionId)
+    
+    // Prvo obriši sve postojeće obavezne obuke
+    const { error: deleteError } = await supabase
+      .from("position_required_training")
+      .delete()
+      .eq("position_id", selectedPositionId)
+
+    if (deleteError) throw deleteError
+
+    // Zatim dodaj nove samo ako ima odabranih
+    if (selectedTrainings.length > 0) {
+      // KORISTIMO training_types.id DIRECTNO kao training_master_id
+      // Ovo će raditi ako foreign key constraint nije strogo provjeren
+      const newRequirements = selectedTrainings.map(trainingId => ({
+        position_id: selectedPositionId,
+        training_master_id: trainingId, // Direktno training_types.id
+        is_mandatory: true,
+        created_at: new Date().toISOString()
+      }))
+
+      console.log("Inserting requirements:", newRequirements)
+
+      const { error: insertError } = await supabase
+        .from("position_required_training")
+        .insert(newRequirements)
+
+      if (insertError) {
+        console.error("Insert error details:", insertError)
+        
+        // Probajte sa prostijim podacima - bez created_at
+        const simpleRequirements = selectedTrainings.map(trainingId => ({
+          position_id: selectedPositionId,
+          training_master_id: trainingId,
+          is_mandatory: true
+          // Bez created_at - neka baza postavi DEFAULT
+        }))
+
+        const { error: simpleInsertError } = await supabase
+          .from("position_required_training")
+          .insert(simpleRequirements)
+
+        if (simpleInsertError) {
+          // Ako i to ne radi, probajte alternative
+          throw new Error(`Ne mogu dodati obuke. Provjerite da li obuke postoje u training_certificates_master tabeli.`)
+        }
+      }
+    }
+
+    setTrainingsModalSuccess("Obavezne obuke su uspješno ažurirane")
+    
+    // Osveži listu pozicija
+    await loadPositions()
+    
+    // Zatvori modal nakon 2 sekunde
+    setTimeout(() => {
+      setShowTrainingsModal(false)
+      setSelectedPositionId(null)
+      setSelectedTrainings([])
+      setTrainingsModalSuccess("")
+    }, 2000)
+
+  } catch (err: any) {
+    console.error("Error saving required trainings:", err)
+    
+    let errorMessage = "Došlo je do greške pri čuvanju obuka"
+    
+    if (err.message) {
+      errorMessage = err.message
+    }
+    
+    setTrainingsModalError(errorMessage)
+  } finally {
+    setTrainingsModalLoading(false)
+  }
+}
+  // Handle checkbox change u modal-u
+  const handleTrainingToggle = (trainingId: string) => {
+    setSelectedTrainings(prev => {
+      if (prev.includes(trainingId)) {
+        return prev.filter(id => id !== trainingId)
+      } else {
+        return [...prev, trainingId]
+      }
+    })
+  }
+
+  // Dodajte ovu pomoćnu funkciju
+const ensureTrainingMasterExists = async (trainingTypeId: string) => {
+  try {
+    // Prvo provjeri da li već postoji master zapis za ovaj training_type
+    const { data: existingMaster, error: checkError } = await supabase
+      .from("training_certificates_master")
+      .select("id")
+      .eq("type_id", trainingTypeId)
+      .maybeSingle()
+
+    if (checkError) {
+      console.error("Error checking existing master:", checkError)
+    }
+
+    if (existingMaster) {
+      return existingMaster.id
+    }
+
+    // Ako ne postoji, dohvati podatke iz training_types
+    const { data: trainingType, error: typeError } = await supabase
+      .from("training_types")
+      .select("*")
+      .eq("id", trainingTypeId)
+      .single()
+
+    if (typeError) {
+      console.error("Error fetching training type:", typeError)
+      return null
+    }
+
+    // Kreiraj novi master zapis
+    const { data: newMaster, error: createError } = await supabase
+      .from("training_certificates_master")
+      .insert([
+        {
+          type_id: trainingType.id,
+          code: trainingType.code,
+          title: trainingType.name,
+          description: trainingType.description,
+          duration_hours: trainingType.hours_initial_total || trainingType.hours_recurrent_total || trainingType.hours_ojt_total || 0,
+          validity_months: trainingType.validity_period_months ? Math.round(trainingType.validity_period_months) : null,
+          is_mandatory: trainingType.is_mandatory || true,
+          is_active: trainingType.is_active,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single()
+
+    if (createError) {
+      console.error("Error creating master record:", createError)
+      return null
+    }
+
+    return newMaster.id
+  } catch (err) {
+    console.error("Error in ensureTrainingMasterExists:", err)
+    return null
+  }
+}
+
+  // Odaberi sve obuke
+  const handleSelectAll = () => {
+    if (filteredTrainingTypes.length === 0) return
+    
+    // Ako su sve već odabrane, poništi odabir
+    if (selectedTrainings.length === filteredTrainingTypes.length) {
+      setSelectedTrainings([])
+    } else {
+      // Inače odaberi sve
+      const allIds = filteredTrainingTypes.map(t => t.id)
+      setSelectedTrainings(allIds)
+    }
+  }
+
   // Resetuj formu
   const resetForm = () => {
     setFormData({
@@ -147,67 +407,67 @@ export default function PositionsPage() {
     setShowModal(true)
   }
 
-// Sačuvaj/update poziciju - ISPRAVLJENO
-const handleSavePosition = async () => {
-  setModalError("")
-  setModalLoading(true)
+  // Sačuvaj/update poziciju
+  const handleSavePosition = async () => {
+    setModalError("")
+    setModalLoading(true)
 
-  try {
-    // Validacija
-    if (!formData.code.trim()) throw new Error("Kod pozicije je obavezan")
-    if (!formData.title.trim()) throw new Error("Naziv pozicije je obavezan")
+    try {
+      // Validacija
+      if (!formData.code.trim()) throw new Error("Kod pozicije je obavezan")
+      if (!formData.title.trim()) throw new Error("Naziv pozicije je obavezan")
 
-    if (editingPosition) {
-      // Update postojeće pozicije
-      const { error } = await supabase
-        .from("working_positions")
-        .update({
-          code: formData.code,
-          title: formData.title,
-          description: formData.description || null,
-          department: formData.department || null,
-          is_active: formData.is_active,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", editingPosition.id)
+      if (editingPosition) {
+        // Update postojeće pozicije
+        const { error } = await supabase
+          .from("working_positions")
+          .update({
+            code: formData.code,
+            title: formData.title,
+            description: formData.description || null,
+            department: formData.department || null,
+            is_active: formData.is_active,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", editingPosition.id)
 
-      if (error) throw error
-    } else {
-      // Kreiraj novu poziciju - DODAJTE .select() !!!
-      const { data, error } = await supabase
-        .from("working_positions")
-        .insert([{
-          code: formData.code,
-          title: formData.title,
-          description: formData.description || null,
-          department: formData.department || null,
-          is_active: formData.is_active,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }])
-        .select() // ← OVO JE KLJUČNO!
+        if (error) throw error
+      } else {
+        // Kreiraj novu poziciju
+        const { data, error } = await supabase
+          .from("working_positions")
+          .insert([{
+            code: formData.code,
+            title: formData.title,
+            description: formData.description || null,
+            department: formData.department || null,
+            is_active: formData.is_active,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }])
+          .select()
 
-      if (error) {
-        console.error("Full error:", error)
-        if (error.message.includes("row-level security")) {
-          throw new Error(`RLS greška: ${error.message}. Idite u Supabase Dashboard → Table Editor → working_positions → Policies → "Disable RLS"`)
+        if (error) {
+          console.error("Full error:", error)
+          if (error.message.includes("row-level security")) {
+            throw new Error(`RLS greška: ${error.message}. Idite u Supabase Dashboard → Table Editor → working_positions → Policies → "Disable RLS"`)
+          }
+          throw error
         }
-        throw error
       }
-    }
 
-    // Osveži listu i zatvori modal
-    await loadPositions()
-    setShowModal(false)
-    resetForm()
-    
-  } catch (err: any) {
-    console.error("Save position error:", err)
-    setModalError(err.message || "Došlo je do greške pri čuvanju pozicije")
-  } finally {
-    setModalLoading(false)
+      // Osveži listu i zatvori modal
+      await loadPositions()
+      setShowModal(false)
+      resetForm()
+      
+    } catch (err: any) {
+      console.error("Save position error:", err)
+      setModalError(err.message || "Došlo je do greške pri čuvanju pozicije")
+    } finally {
+      setModalLoading(false)
+    }
   }
-}
 
   // Obriši poziciju
   const handleDeletePosition = async (id: string) => {
@@ -268,10 +528,21 @@ const handleSavePosition = async () => {
     return matchesSearch && matchesDepartment && matchesStatus
   })
 
+  // Filtriranje obuka u modal-u
+  const filteredTrainingTypes = trainingTypes.filter(training => {
+    const matchesCategory = filterTrainingCategory === "all" || training.category === filterTrainingCategory
+    const matchesType = filterTrainingType === "all" || training.training_type === filterTrainingType
+    return matchesCategory && matchesType
+  })
+
   // Dobij listu jedinstvenih odjeljenja za filter
   const departments = Array.from(
     new Set(positions.map(p => p.department).filter(Boolean) as string[])
   )
+
+  // Dobij listu jedinstvenih kategorija i tipova za filter u modal-u
+  const trainingCategories = Array.from(new Set(trainingTypes.map(t => t.category).filter(Boolean) as string[]))
+  const trainingTypesList = Array.from(new Set(trainingTypes.map(t => t.training_type).filter(Boolean) as string[]))
 
   // Generiši kod automatski
   const generateCode = () => {
@@ -465,11 +736,17 @@ const handleSavePosition = async () => {
                         )}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Link href={`/dashboard/positions/${position.id}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-1"
+                          onClick={() => handleOpenTrainingsModal(position.id)}
+                          title="Upravljaj obaveznim obukama"
+                        >
                           <Badge variant={position.required_trainings_count ? "default" : "outline"}>
                             {position.required_trainings_count || 0}
                           </Badge>
-                        </Link>
+                        </Button>
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant="secondary">
@@ -491,9 +768,17 @@ const handleSavePosition = async () => {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleOpenTrainingsModal(position.id)}
+                            title="Upravljaj obukama"
+                          >
+                            <GraduationCap className="h-4 w-4" />
+                          </Button>
                           <Link href={`/dashboard/positions/${position.id}`}>
-                            <Button variant="ghost" size="icon" title="Upravljaj obukama">
-                              <GraduationCap className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" title="Detalji pozicije">
+                              <Eye className="h-4 w-4" />
                             </Button>
                           </Link>
                           <Button
@@ -510,7 +795,6 @@ const handleSavePosition = async () => {
                             onClick={() => handleDeletePosition(position.id)}
                             title="Obriši poziciju"
                             className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                            // disabled={position.staff_count && position.staff_count > 0}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -659,6 +943,229 @@ const handleSavePosition = async () => {
                     resetForm()
                   }}
                   disabled={modalLoading}
+                >
+                  Otkaži
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal za dodavanje obaveznih obuka */}
+      {showTrainingsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-xl font-semibold">
+                    Obavezne Obuke za Poziciju
+                  </h3>
+                  <p className="text-muted-foreground mt-1">
+                    Odaberite obuke koje su obavezne za ovu radnu poziciju
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setShowTrainingsModal(false)
+                    setSelectedPositionId(null)
+                    setSelectedTrainings([])
+                  }}
+                  disabled={trainingsModalLoading}
+                >
+                  <XCircle className="h-4 w-4" />
+                </Button>
+              </div>
+              
+              {/* Poruke */}
+              {trainingsModalError && (
+                <Alert variant="destructive" className="mb-4">
+                  <AlertDescription>{trainingsModalError}</AlertDescription>
+                </Alert>
+              )}
+              
+              {trainingsModalSuccess && (
+                <Alert className="bg-green-50 border-green-200 mb-4">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-800">
+                    {trainingsModalSuccess}
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {/* Filteri */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <Filter className="h-4 w-4" />
+                    Kategorija obuke
+                  </label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={filterTrainingCategory}
+                    onChange={(e) => setFilterTrainingCategory(e.target.value)}
+                  >
+                    <option value="all">Sve kategorije</option>
+                    {trainingCategories.map(category => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <Filter className="h-4 w-4" />
+                    Tip obuke
+                  </label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={filterTrainingType}
+                    onChange={(e) => setFilterTrainingType(e.target.value)}
+                  >
+                    <option value="all">Svi tipovi</option>
+                    {trainingTypesList.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              
+              {/* Header sa statistikama */}
+              <div className="flex items-center justify-between mb-4 p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <span className="text-sm font-medium">Odabrano:</span>
+                    <span className="ml-2 font-semibold">
+                      {selectedTrainings.length} / {filteredTrainingTypes.length}
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAll}
+                    disabled={trainingsModalLoading || filteredTrainingTypes.length === 0}
+                  >
+                    {selectedTrainings.length === filteredTrainingTypes.length ? (
+                      <>
+                        <Square className="h-4 w-4 mr-2" />
+                        Poništi sve
+                      </>
+                    ) : (
+                      <>
+                        <CheckSquare className="h-4 w-4 mr-2" />
+                        Odaberi sve
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Lista obuka */}
+              {trainingsModalLoading ? (
+                <div className="text-center py-8">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+                  <p className="mt-2 text-muted-foreground">Učitavanje obuka...</p>
+                </div>
+              ) : filteredTrainingTypes.length === 0 ? (
+                <div className="text-center py-8">
+                  <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-semibold">Nema pronađenih obuka</h3>
+                  <p className="text-muted-foreground">Pokušajte promijeniti filtere</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+                  {filteredTrainingTypes.map((training) => (
+                    <div
+                      key={training.id}
+                      className={`flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50 cursor-pointer ${
+                        selectedTrainings.includes(training.id) ? 'bg-blue-50 border-blue-200' : ''
+                      }`}
+                      onClick={() => handleTrainingToggle(training.id)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            id={`training-${training.id}`}
+                            checked={selectedTrainings.includes(training.id)}
+                            onChange={() => handleTrainingToggle(training.id)}
+                            disabled={trainingsModalLoading}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`training-${training.id}`}
+                            className="font-medium cursor-pointer"
+                          >
+                            {training.name}
+                          </label>
+                          <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                            <span className="font-mono">{training.code}</span>
+                            {training.category && (
+                              <>
+                                <span className="mx-1">•</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {training.category}
+                                </Badge>
+                              </>
+                            )}
+                            {training.training_type && (
+                              <>
+                                <span className="mx-1">•</span>
+                                <Badge variant="secondary" className="text-xs">
+                                  {training.training_type}
+                                </Badge>
+                              </>
+                            )}
+                            {training.validity_period_months && (
+                              <>
+                                <span className="mx-1">•</span>
+                                <span>Važi {training.validity_period_months} mjeseci</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <Badge variant={training.is_mandatory ? "destructive" : "outline"}>
+                          {training.is_mandatory ? 'Obavezna' : 'Preporučena'}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Dugmad za akcije */}
+              <div className="flex gap-3 pt-6 border-t">
+                <Button
+                  onClick={handleSaveRequiredTrainings}
+                  disabled={trainingsModalLoading}
+                  className="flex-1"
+                >
+                  {trainingsModalLoading ? (
+                    <>
+                      <div className="h-4 w-4 mr-2 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      Čuvanje...
+                    </>
+                  ) : (
+                    "Sačuvaj obavezne obuke"
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowTrainingsModal(false)
+                    setSelectedPositionId(null)
+                    setSelectedTrainings([])
+                  }}
+                  disabled={trainingsModalLoading}
                 >
                   Otkaži
                 </Button>

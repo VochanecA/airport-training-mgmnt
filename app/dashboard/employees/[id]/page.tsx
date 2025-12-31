@@ -25,73 +25,67 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 async function getEmployeeDetails(id: string) {
   const supabase = await getSupabaseServerClient()
 
-  // Get employee details
+  // Get employee details from STAFF table
   const { data: employee } = await supabase
-    .from("employees")
-    .select("*")
+    .from("staff")
+    .select(`
+      *,
+      working_positions (
+        title,
+        code,
+        department
+      )
+    `)
     .eq("id", id)
     .single()
 
   if (!employee) return null
 
-  // Get employee's training enrollments (from old system if exists)
-  const { data: enrollments } = await supabase
-    .from("training_enrollments")
+  // Get employee's certificates from training_certificate_records
+  const { data: certificates } = await supabase
+    .from("training_certificate_records")
     .select(`
       *,
-      trainings (
+      training_certificates_master (
         title,
-        start_date,
-        end_date,
-        status
+        code
       )
     `)
-    .eq("employee_id", id)
-    .order("enrollment_date", { ascending: false })
-
-  // Get certificates
-  const { data: certificates } = await supabase
-    .from("certificates")
-    .select(`
-      *,
-      training_types (name)
-    `)
-    .eq("employee_id", id)
+    .eq("staff_id", id)
     .order("issue_date", { ascending: false })
 
-  // Get NEW staff_trainings data (from new expiry system)
+  // Get NEW staff trainings (from training_certificate_records)
   const { data: staffTrainings } = await supabase
-    .from("staff_trainings")
+    .from("training_certificate_records")
     .select(`
       *,
-      training_type:training_type_id (
-        name,
+      training_certificates_master (
+        title,
         code,
         validity_months
       )
     `)
     .eq("staff_id", id)
-    .order("expires_date", { ascending: true })
+    .order("expiry_date", { ascending: true })
 
   return {
     employee,
-    enrollments: enrollments || [],
     certificates: certificates || [],
     staffTrainings: staffTrainings || []
   }
 }
 
 // Helper function to calculate days remaining
-function getDaysRemaining(expiresDate: string) {
+function getDaysRemaining(expiryDate: string) {
   const today = new Date()
-  const expiry = new Date(expiresDate)
+  const expiry = new Date(expiryDate)
   const diff = expiry.getTime() - today.getTime()
   return Math.ceil(diff / (1000 * 60 * 60 * 24))
 }
 
 // Helper function to get training status badge
-function getTrainingStatusBadge(status: string, expiresDate: string) {
-  const days = getDaysRemaining(expiresDate)
+function getTrainingStatusBadge(status: string, expiryDate: string) {
+  const days = getDaysRemaining(expiryDate)
   
   if (status === 'expired' || days < 0) {
     return (
@@ -132,23 +126,30 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
     notFound()
   }
 
-  const { employee, enrollments, certificates, staffTrainings } = data
+  const { employee, certificates, staffTrainings } = data
 
   // Calculate statistics
-  const validTrainings = staffTrainings.filter(t => {
-    const days = getDaysRemaining(t.expires_date)
+  const validTrainings = staffTrainings.filter((t: any) => {
+    if (!t.expiry_date) return false
+    const days = getDaysRemaining(t.expiry_date)
     return days > 0
   }).length
 
-  const expiringSoonTrainings = staffTrainings.filter(t => {
-    const days = getDaysRemaining(t.expires_date)
+  const expiringSoonTrainings = staffTrainings.filter((t: any) => {
+    if (!t.expiry_date) return false
+    const days = getDaysRemaining(t.expiry_date)
     return days > 0 && days <= 30
   }).length
 
-  const expiredTrainings = staffTrainings.filter(t => {
-    const days = getDaysRemaining(t.expires_date)
+  const expiredTrainings = staffTrainings.filter((t: any) => {
+    if (!t.expiry_date) return false
+    const days = getDaysRemaining(t.expiry_date)
     return days < 0
   }).length
+
+  // Get position info from joined table
+  const positionTitle = employee.working_positions?.[0]?.title || employee.position_id || "Nije postavljena"
+  const department = employee.working_positions?.[0]?.department || employee.department || "Nije postavljen"
 
   return (
     <div className="space-y-6">
@@ -164,7 +165,7 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
             <h1 className="text-3xl font-bold tracking-tight">
               {employee.first_name} {employee.last_name}
             </h1>
-            <p className="text-muted-foreground">{employee.position || "Zaposleni"}</p>
+            <p className="text-muted-foreground">{positionTitle}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -221,25 +222,21 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
               </div>
             )}
 
-            {employee.position && (
-              <div className="flex items-center gap-3">
-                <Briefcase className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium">Pozicija</p>
-                  <p className="text-sm text-muted-foreground">{employee.position}</p>
-                </div>
+            <div className="flex items-center gap-3">
+              <Briefcase className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">Pozicija</p>
+                <p className="text-sm text-muted-foreground">{positionTitle}</p>
               </div>
-            )}
+            </div>
 
-            {employee.department && (
-              <div className="flex items-center gap-3">
-                <Building2 className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium">Odsek</p>
-                  <p className="text-sm text-muted-foreground">{employee.department}</p>
-                </div>
+            <div className="flex items-center gap-3">
+              <Building2 className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">Odsek</p>
+                <p className="text-sm text-muted-foreground">{department}</p>
               </div>
-            )}
+            </div>
 
             {employee.hire_date && (
               <div className="flex items-center gap-3">
@@ -308,7 +305,7 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
         </Card>
       </div>
 
-      {/* Employee's Trainings (NEW SYSTEM) */}
+      {/* Employee's Trainings */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -338,7 +335,7 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                   <TableRow>
                     <TableHead>Obuka</TableHead>
                     <TableHead>Šifra</TableHead>
-                    <TableHead>Datum Završetka</TableHead>
+                    <TableHead>Datum Polaganja</TableHead>
                     <TableHead>Datum Isteka</TableHead>
                     <TableHead>Preostalo Dana</TableHead>
                     <TableHead>Status</TableHead>
@@ -347,9 +344,9 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                 </TableHeader>
                 <TableBody>
                   {staffTrainings.map((training: any) => {
-                    const daysRemaining = getDaysRemaining(training.expires_date)
-                    const isExpiringSoon = daysRemaining <= 30
-                    const isExpired = daysRemaining < 0
+                    const daysRemaining = training.expiry_date ? getDaysRemaining(training.expiry_date) : null
+                    const isExpiringSoon = daysRemaining && daysRemaining <= 30
+                    const isExpired = daysRemaining && daysRemaining < 0
                     
                     return (
                       <TableRow 
@@ -357,31 +354,47 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                         className={isExpired ? "bg-red-50" : isExpiringSoon ? "bg-yellow-50" : ""}
                       >
                         <TableCell className="font-medium">
-                          {training.training_type?.name || "Nepoznata obuka"}
+                          {training.training_certificates_master?.title || "Nepoznata obuka"}
                         </TableCell>
                         <TableCell>
                           <span className="font-mono text-sm">
-                            {training.training_type?.code || "N/A"}
+                            {training.training_certificates_master?.code || "N/A"}
                           </span>
                         </TableCell>
                         <TableCell>
-                          {new Date(training.completed_date).toLocaleDateString("sr-RS")}
+                          {training.completion_date 
+                            ? new Date(training.completion_date).toLocaleDateString("sr-RS")
+                            : training.issue_date
+                              ? new Date(training.issue_date).toLocaleDateString("sr-RS")
+                              : "N/A"}
                         </TableCell>
                         <TableCell>
-                          <div className={`font-medium ${isExpired ? "text-red-600" : isExpiringSoon ? "text-yellow-600" : ""}`}>
-                            {new Date(training.expires_date).toLocaleDateString("sr-RS")}
-                          </div>
+                          {training.expiry_date ? (
+                            <div className={`font-medium ${isExpired ? "text-red-600" : isExpiringSoon ? "text-yellow-600" : ""}`}>
+                              {new Date(training.expiry_date).toLocaleDateString("sr-RS")}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">Bez isteka</span>
+                          )}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Clock className={`h-4 w-4 ${isExpired ? "text-red-500" : isExpiringSoon ? "text-yellow-500" : "text-gray-500"}`} />
-                            <span className={isExpired ? "font-bold text-red-600" : isExpiringSoon ? "font-semibold text-yellow-600" : ""}>
-                              {daysRemaining > 0 ? `${daysRemaining} dana` : "ISTEKLO"}
-                            </span>
-                          </div>
+                          {training.expiry_date ? (
+                            <div className="flex items-center gap-2">
+                              <Clock className={`h-4 w-4 ${isExpired ? "text-red-500" : isExpiringSoon ? "text-yellow-500" : "text-gray-500"}`} />
+                              <span className={isExpired ? "font-bold text-red-600" : isExpiringSoon ? "font-semibold text-yellow-600" : ""}>
+                                {daysRemaining && daysRemaining > 0 ? `${daysRemaining} dana` : "ISTEKLO"}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell>
-                          {getTrainingStatusBadge(training.status, training.expires_date)}
+                          {training.expiry_date ? (
+                            getTrainingStatusBadge(training.status, training.expiry_date)
+                          ) : (
+                            <Badge variant="secondary">Bez isteka</Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className="text-sm text-muted-foreground">
@@ -397,57 +410,6 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
           )}
         </CardContent>
       </Card>
-
-      {/* Old Training History (if exists) */}
-      {enrollments.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Stara Istorija Obuka</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Obuka</TableHead>
-                    <TableHead>Period</TableHead>
-                    <TableHead>Status Prisustva</TableHead>
-                    <TableHead>Status Završetka</TableHead>
-                    <TableHead>Ocena</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {enrollments.map((enrollment: any) => (
-                    <TableRow key={enrollment.id}>
-                      <TableCell className="font-medium">{enrollment.trainings?.title || "N/A"}</TableCell>
-                      <TableCell>
-                        {enrollment.trainings?.start_date
-                          ? new Date(enrollment.trainings.start_date).toLocaleDateString("sr-RS")
-                          : "N/A"}
-                      </TableCell>
-                      <TableCell>
-                        {enrollment.attendance_status === "attended"
-                          ? "Prisustvovao"
-                          : enrollment.attendance_status === "missed"
-                            ? "Izostao"
-                            : enrollment.attendance_status || "N/A"}
-                      </TableCell>
-                      <TableCell>
-                        {enrollment.completion_status === "completed"
-                          ? "Završio"
-                          : enrollment.completion_status === "in_progress"
-                            ? "U toku"
-                            : enrollment.completion_status || "N/A"}
-                      </TableCell>
-                      <TableCell>{enrollment.score || "N/A"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Certificates (if exists) */}
       {certificates.length > 0 && (
@@ -470,9 +432,13 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                 <TableBody>
                   {certificates.map((certificate: any) => (
                     <TableRow key={certificate.id}>
-                      <TableCell className="font-medium">{certificate.certificate_number}</TableCell>
-                      <TableCell>{certificate.training_types?.name || "N/A"}</TableCell>
-                      <TableCell>{new Date(certificate.issue_date).toLocaleDateString("sr-RS")}</TableCell>
+                      <TableCell className="font-medium">{certificate.certificate_number || "N/A"}</TableCell>
+                      <TableCell>{certificate.training_certificates_master?.title || "N/A"}</TableCell>
+                      <TableCell>
+                        {certificate.issue_date 
+                          ? new Date(certificate.issue_date).toLocaleDateString("sr-RS")
+                          : "N/A"}
+                      </TableCell>
                       <TableCell>
                         {certificate.expiry_date
                           ? new Date(certificate.expiry_date).toLocaleDateString("sr-RS")

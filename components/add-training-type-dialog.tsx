@@ -350,231 +350,232 @@ export function AddTrainingTypeDialog({ onTrainingTypeAdded }: { onTrainingTypeA
             </div>
             
             {/* Satnice za različite vrste obuke */}
-            <div className="space-y-4 pt-4 border-t">
-              <h3 className="font-medium text-sm text-muted-foreground flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                Trajanje obuke po komponentama (sati)
-              </h3>
-              
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="grid grid-cols-4 gap-3 mb-2">
-                  <div className="font-medium text-sm">Vrsta obuke</div>
-                  <div className="font-medium text-sm text-center">Teorija</div>
-                  <div className="font-medium text-sm text-center">Praksa</div>
-                  <div className="font-medium text-sm text-center">OJT</div>
-                </div>
-                
-                {/* Initial Training */}
-                <div className="grid grid-cols-4 gap-3 py-2 border-b">
-                  <div className="text-sm">Initial Training</div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_initial_theory}
-                      onChange={(e) => setFormData({ ...formData, hours_initial_theory: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_initial_practical}
-                      onChange={(e) => setFormData({ ...formData, hours_initial_practical: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_initial_ojt}
-                      onChange={(e) => setFormData({ ...formData, hours_initial_ojt: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-                
-                {/* Recurrent Training */}
-                <div className="grid grid-cols-4 gap-3 py-2 border-b">
-                  <div className="text-sm">Recurrent Training</div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_recurrent_theory}
-                      onChange={(e) => setFormData({ ...formData, hours_recurrent_theory: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_recurrent_practical}
-                      onChange={(e) => setFormData({ ...formData, hours_recurrent_practical: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_recurrent_ojt}
-                      onChange={(e) => setFormData({ ...formData, hours_recurrent_ojt: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-                
-                {/* Re-qualification Training */}
-                <div className="grid grid-cols-4 gap-3 py-2 border-b">
-                  <div className="text-sm">Re-qualification</div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_re_qualification_theory}
-                      onChange={(e) => setFormData({ ...formData, hours_re_qualification_theory: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_re_qualification_practical}
-                      onChange={(e) => setFormData({ ...formData, hours_re_qualification_practical: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_re_qualification_ojt}
-                      onChange={(e) => setFormData({ ...formData, hours_re_qualification_ojt: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-                
-                {/* Update Training */}
-                <div className="grid grid-cols-4 gap-3 py-2 border-b">
-                  <div className="text-sm">Update Training</div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_update_theory}
-                      onChange={(e) => setFormData({ ...formData, hours_update_theory: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_update_practical}
-                      onChange={(e) => setFormData({ ...formData, hours_update_practical: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_update_ojt}
-                      onChange={(e) => setFormData({ ...formData, hours_update_ojt: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-                
-                {/* OJT Training */}
-                <div className="grid grid-cols-4 gap-3 py-2">
-                  <div className="text-sm">OJT Training</div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_ojt_theory}
-                      onChange={(e) => setFormData({ ...formData, hours_ojt_theory: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_ojt_practical}
-                      onChange={(e) => setFormData({ ...formData, hours_ojt_practical: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={formData.hours_ojt_total}
-                      onChange={(e) => setFormData({ ...formData, hours_ojt_total: e.target.value })}
-                      disabled={loading}
-                      placeholder="0"
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Briefcase className="h-3 w-3" />
-                <span>Unesite broj sati za svaku komponentu obuke</span>
-              </div>
-            </div>
+{/* Satnice za različite vrste obuke */}
+<div className="space-y-4 pt-4 border-t dark:border-gray-700">
+  <h3 className="font-medium text-sm text-muted-foreground flex items-center gap-2">
+    <Clock className="h-4 w-4" />
+    Trajanje obuke po komponentama (sati)
+  </h3>
+  
+  <div className="dark:bg-gray-900/50 bg-gray-50 rounded-lg p-4">
+    <div className="grid grid-cols-4 gap-3 mb-2">
+      <div className="font-medium text-sm">Vrsta obuke</div>
+      <div className="font-medium text-sm text-center">Teorija</div>
+      <div className="font-medium text-sm text-center">Praksa</div>
+      <div className="font-medium text-sm text-center">OJT</div>
+    </div>
+    
+    {/* Initial Training */}
+    <div className="grid grid-cols-4 gap-3 py-2 border-b dark:border-gray-700 border-gray-200">
+      <div className="text-sm dark:text-gray-300">Initial Training</div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_initial_theory}
+          onChange={(e) => setFormData({ ...formData, hours_initial_theory: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_initial_practical}
+          onChange={(e) => setFormData({ ...formData, hours_initial_practical: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_initial_ojt}
+          onChange={(e) => setFormData({ ...formData, hours_initial_ojt: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+    
+    {/* Recurrent Training */}
+    <div className="grid grid-cols-4 gap-3 py-2 border-b dark:border-gray-700 border-gray-200">
+      <div className="text-sm dark:text-gray-300">Recurrent Training</div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_recurrent_theory}
+          onChange={(e) => setFormData({ ...formData, hours_recurrent_theory: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_recurrent_practical}
+          onChange={(e) => setFormData({ ...formData, hours_recurrent_practical: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_recurrent_ojt}
+          onChange={(e) => setFormData({ ...formData, hours_recurrent_ojt: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+    
+    {/* Re-qualification Training */}
+    <div className="grid grid-cols-4 gap-3 py-2 border-b dark:border-gray-700 border-gray-200">
+      <div className="text-sm dark:text-gray-300">Re-qualification</div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_re_qualification_theory}
+          onChange={(e) => setFormData({ ...formData, hours_re_qualification_theory: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_re_qualification_practical}
+          onChange={(e) => setFormData({ ...formData, hours_re_qualification_practical: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_re_qualification_ojt}
+          onChange={(e) => setFormData({ ...formData, hours_re_qualification_ojt: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+    
+    {/* Update Training */}
+    <div className="grid grid-cols-4 gap-3 py-2 border-b dark:border-gray-700 border-gray-200">
+      <div className="text-sm dark:text-gray-300">Update Training</div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_update_theory}
+          onChange={(e) => setFormData({ ...formData, hours_update_theory: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_update_practical}
+          onChange={(e) => setFormData({ ...formData, hours_update_practical: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_update_ojt}
+          onChange={(e) => setFormData({ ...formData, hours_update_ojt: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+    
+    {/* OJT Training */}
+    <div className="grid grid-cols-4 gap-3 py-2">
+      <div className="text-sm dark:text-gray-300">OJT Training</div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_ojt_theory}
+          onChange={(e) => setFormData({ ...formData, hours_ojt_theory: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_ojt_practical}
+          onChange={(e) => setFormData({ ...formData, hours_ojt_practical: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div>
+        <Input
+          type="number"
+          min="0"
+          step="0.5"
+          value={formData.hours_ojt_total}
+          onChange={(e) => setFormData({ ...formData, hours_ojt_total: e.target.value })}
+          disabled={loading}
+          placeholder="0"
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+  </div>
+  
+  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <Briefcase className="h-3 w-3" />
+    <span>Unesite broj sati za svaku komponentu obuke</span>
+  </div>
+</div>
             
             {/* Validnost i obaveštenja */}
             <div className="space-y-4 pt-4 border-t">

@@ -1,40 +1,32 @@
-import type React from "react"
-import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
-import { Analytics } from "@vercel/analytics/react"
-import { ThemeProvider } from "@/components/theme-provider"
-import { AuthProvider } from "@/components/auth-provider" // Vratite originalni
-import "./globals.css"
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { ThemeProvider } from "@/components/theme-provider";
+import "./globals.css";
 
-const geist = Geist({ subsets: ["latin"] })
-const geistMono = Geist_Mono({ subsets: ["latin"] })
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Airport Training System - Upravljanje Obukama i Sertifikatima",
-  description: "Modern sistem za upravljanje obukama, sertifikatima i trening programima zaposlenih",
-  keywords: ["obuke", "sertifikati", "trening", "zaposleni", "aerodrom"],
-}
+  title: "Training Management System",
+  description: "Sistem za upravljanje obukama i sertifikatima",
+};
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
-    <html lang="sr" suppressHydrationWarning>
-      <body className={`${geist.className} antialiased`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
-          <AuthProvider> {/* Vratite AuthProvider ovde */}
-            {children}
-          </AuthProvider>
-          <Analytics />
+          {children}
         </ThemeProvider>
       </body>
     </html>
-  )
+  );
 }

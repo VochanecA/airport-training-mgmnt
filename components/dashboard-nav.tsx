@@ -5,14 +5,16 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth-provider"
-import { GraduationCap, Users, Briefcase,Award,Clock, Calendar, BarChart3, LogOut, Menu } from "lucide-react"
+import { GraduationCap, Users, Briefcase, Award, Clock, Calendar, BarChart3, LogOut, Menu, Layers } from "lucide-react"
 import { useState } from "react"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 const navigation = [
   { name: "Pregled", href: "/dashboard", icon: BarChart3 },
+  { name: "Tipovi Obuka", href: "/dashboard/training-types", icon: Layers },
   { name: "Obuke", href: "/dashboard/trainings", icon: GraduationCap },
- { name: "Radne Pozicije",  href: "/dashboard/positions",  icon: Briefcase},
+  { name: "Radne Pozicije", href: "/dashboard/positions", icon: Briefcase },
   { name: "Zaposleni", href: "/dashboard/employees", icon: Users },
   { name: "Sertifikati", href: "/dashboard/certificates", icon: Award },
   { name: "Istek Obuka", href: "/dashboard/training-expiry", icon: Clock },
@@ -34,9 +36,6 @@ export function DashboardNav() {
     // Close mobile menu if open
     setOpen(false)
     
-    // Add loading state to button immediately
-    const button = e.currentTarget as HTMLButtonElement
-    
     // Call signOut (this will redirect to /login immediately)
     await signOut()
     
@@ -48,7 +47,7 @@ export function DashboardNav() {
     }, 1000)
   }
 
-  const NavContent = () => (
+  const NavContent = ({ isMobile = false }: { isMobile?: boolean }) => (
     <>
       <div className="flex items-center gap-2 px-6 py-4 border-b">
         <GraduationCap className="h-6 w-6 text-primary" />
@@ -78,11 +77,20 @@ export function DashboardNav() {
         })}
       </nav>
 
-      <div className="border-t p-4 space-y-2">
+      <div className="border-t p-4 space-y-3">
+        {/* User Info */}
         <div className="px-3 text-sm">
           <p className="font-medium truncate">{user?.email}</p>
           <p className="text-xs text-muted-foreground">{user?.role || "Korisnik"}</p>
         </div>
+
+        {/* Theme Toggle - Desktop i Mobile */}
+        <div className="flex items-center justify-between px-3 py-2">
+          <span className="text-sm font-medium">Izgled</span>
+          <ThemeToggle />
+        </div>
+
+        {/* Logout Button */}
         <Button 
           variant="ghost" 
           className="w-full justify-start gap-2 hover:bg-destructive/10 hover:text-destructive transition-colors" 
@@ -113,10 +121,16 @@ export function DashboardNav() {
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon">
               <Menu className="h-5 w-5" />
+              <span className="sr-only">Otvori menu</span>
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-64 p-0">
-            <NavContent />
+            {/* Dodajte SheetTitle za accessibility - ali sakrijte ga vizuelno */}
+            <SheetTitle className="sr-only">Navigacija</SheetTitle>
+            <SheetDescription className="sr-only">
+              Glavni meni za Airport Training Management sistem
+            </SheetDescription>
+            <NavContent isMobile={true} />
           </SheetContent>
         </Sheet>
       </div>

@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -21,9 +20,27 @@ import {
   Save,
   Plus,
   Briefcase,
-  Trash2
+  X
 } from "lucide-react"
 import Link from "next/link"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 interface Position {
   id: string
@@ -41,8 +58,12 @@ interface TrainingType {
   category?: string
   training_type?: string
   is_mandatory?: boolean
-  duration_days?: number
-  validity_months?: number
+  validity_period_months?: number
+  hours_initial_total?: number
+  hours_recurrent_total?: number
+  hours_re_qualification_total?: number
+  hours_update_total?: number
+  hours_ojt_total?: number
 }
 
 interface RequiredTraining {
@@ -74,66 +95,89 @@ export default function PositionTrainingsPage() {
   const [filterCategory, setFilterCategory] = useState<string>("all")
   const [filterType, setFilterType] = useState<string>("all")
 
+  // Dodavanje nove obuke
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [addingTraining, setAddingTraining] = useState(false)
+  const [newTraining, setNewTraining] = useState({
+    code: "",
+    name: "",
+    description: "",
+    category: "",
+    training_type: "",
+    validity_period_months: "",
+    is_mandatory: "true",
+  })
+
   const positionId = params.id as string
 
   // Učitaj podatke
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true)
-        
-        // Učitaj poziciju
-        const { data: positionData, error: positionError } = await supabase
-          .from("working_positions")
-          .select("*")
-          .eq("id", positionId)
-          .single()
-
-        if (positionError) throw positionError
-        setPosition(positionData)
-
-        // Učitaj sve tipove obuka
-        const { data: trainingsData, error: trainingsError } = await supabase
-          .from("training_types")
-          .select("*")
-          .eq("is_active", true)
-          .order("name")
-
-        if (trainingsError) throw trainingsError
-        setTrainingTypes(trainingsData || [])
-
-        // Učitaj obavezne obuke za ovu poziciju
-        const { data: requiredData, error: requiredError } = await supabase
-          .from("position_required_training")
-          .select(`
-            id,
-            training_type_id,
-            is_mandatory,
-            created_at,
-            training_type:training_type_id (*)
-          `)
-          .eq("position_id", positionId)
-
-        if (requiredError) throw requiredError
-        
-        setRequiredTrainings(requiredData || [])
-        
-        // Postavi selektovane obuke
-        const selectedIds = (requiredData || []).map(rt => rt.training_type_id)
-        setSelectedTrainings(selectedIds)
-
-      } catch (err: any) {
-        console.error("Error loading data:", err)
-        setError(err.message || "Došlo je do greške pri učitavanju podataka")
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (positionId) {
-      loadData()
-    }
+    loadData()
   }, [positionId])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      
+      // Učitaj poziciju
+      const { data: positionData, error: positionError } = await supabase
+        .from("working_positions")
+        .select("*")
+        .eq("id", positionId)
+        .single()
+
+      if (positionError) throw positionError
+      setPosition(positionData)
+
+      // Učitaj sve tipove obuka iz training_types
+      const { data: trainingsData, error: trainingsError } = await supabase
+        .from("training_types")
+        .select("*")
+        .eq("is_active", true)
+        .order("name")
+
+      if (trainingsError) throw trainingsError
+      setTrainingTypes(trainingsData || [])
+
+      // Učitaj obavezne obuke za ovu poziciju iz position_required_training
+      // Moramo prilagoditi da koristi training_master_id za training_type_id
+      const { data: requiredData, error: requiredError } = await supabase
+        .from("position_required_training")
+        .select(`
+          id,
+          training_master_id,
+          is_mandatory,
+          created_at
+        `)
+        .eq("position_id", positionId)
+
+      if (requiredError) throw requiredError
+      
+      // Mapiraj podatke i poveži sa training_types
+      const mappedRequiredData = (requiredData || []).map(item => {
+        const training = trainingsData?.find(t => t.id === item.training_master_id)
+        return {
+          id: item.id,
+          training_type_id: item.training_master_id,
+          is_mandatory: item.is_mandatory,
+          created_at: item.created_at,
+          training_type: training || null
+        }
+      }).filter(item => item.training_type !== null) as RequiredTraining[]
+      
+      setRequiredTrainings(mappedRequiredData)
+      
+      // Postavi selektovane obuke
+      const selectedIds = mappedRequiredData.map(rt => rt.training_type_id)
+      setSelectedTrainings(selectedIds)
+
+    } catch (err: any) {
+      console.error("Error loading data:", err)
+      setError(err.message || "Došlo je do greške pri učitavanju podataka")
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // Sačuvaj promjene
   const handleSave = async () => {
@@ -154,7 +198,7 @@ export default function PositionTrainingsPage() {
       if (selectedTrainings.length > 0) {
         const newRequirements = selectedTrainings.map(trainingId => ({
           position_id: positionId,
-          training_type_id: trainingId,
+          training_master_id: trainingId, // Koristimo training_master_id field
           is_mandatory: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -172,6 +216,7 @@ export default function PositionTrainingsPage() {
       // Osveži podatke
       setTimeout(() => {
         router.refresh()
+        loadData()
       }, 1000)
 
     } catch (err: any) {
@@ -191,6 +236,63 @@ export default function PositionTrainingsPage() {
         return [...prev, trainingId]
       }
     })
+  }
+
+  // Dodaj novi tip obuke
+  const handleAddTraining = async () => {
+    setAddingTraining(true)
+    setError("")
+
+    try {
+      // Kreiraj novi tip obuke u training_types tabeli
+      const { data: newTrainingType, error: trainingError } = await supabase
+        .from("training_types")
+        .insert([
+          {
+            code: newTraining.code,
+            name: newTraining.name,
+            description: newTraining.description || null,
+            category: newTraining.category || null,
+            training_type: newTraining.training_type || null,
+            validity_period_months: newTraining.validity_period_months ? parseFloat(newTraining.validity_period_months) : null,
+            is_mandatory: newTraining.is_mandatory === "true",
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single()
+
+      if (trainingError) throw trainingError
+
+      // Automatski dodaj u selektovane obuke za ovu poziciju
+      const updatedSelectedTrainings = [...selectedTrainings, newTrainingType.id]
+      setSelectedTrainings(updatedSelectedTrainings)
+
+      // Reset form
+      setNewTraining({
+        code: "",
+        name: "",
+        description: "",
+        category: "",
+        training_type: "",
+        validity_period_months: "",
+        is_mandatory: "true",
+      })
+
+      setShowAddDialog(false)
+      setSuccess("Novi tip obuke je uspješno dodat i automatski dodan ovoj poziciji")
+
+      // Osveži listu obuka
+      await loadData()
+
+    } catch (err: any) {
+      console.error("Error adding training:", err)
+      setError(err.message || "Došlo je do greške pri dodavanju tipa obuke")
+    } finally {
+      setAddingTraining(false)
+    }
   }
 
   // Filtriraj obuke
@@ -222,9 +324,29 @@ export default function PositionTrainingsPage() {
     return labels[category] || category
   }
 
+  // Dobij labelu za tip obuke
+  const getTrainingTypeLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      'initial': 'Initial Training',
+      'recurrent': 'Recurrent Training',
+      're_qualification': 'Re-qualification',
+      'update': 'Update Training',
+      'ojt': 'OJT Training',
+      'refresher': 'Refresher Training',
+      'conversion': 'Conversion Training'
+    }
+    return labels[type] || type
+  }
+
   // Dobij jedinstvene kategorije i tipove za filtere
   const categories = Array.from(new Set(trainingTypes.map(t => t.category).filter(Boolean) as string[]))
   const types = Array.from(new Set(trainingTypes.map(t => t.training_type).filter(Boolean) as string[]))
+
+  // Funkcija za formatiranje sati
+  const formatHours = (hours?: number) => {
+    if (!hours) return null
+    return `${hours} sati`
+  }
 
   if (loading) {
     return (
@@ -292,7 +414,7 @@ export default function PositionTrainingsPage() {
             </div>
             <div className="space-y-2">
               <p className="text-sm font-medium text-muted-foreground">Trenutno obaveznih obuka</p>
-              <p className="text-lg font-semibold">{requiredTrainings.length}</p>
+              <p className="text-lg font-semibold">{selectedTrainings.length}</p>
             </div>
           </div>
           {position.description && (
@@ -341,10 +463,10 @@ export default function PositionTrainingsPage() {
             {/* Filteri */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="category-filter" className="flex items-center gap-2">
+                <label htmlFor="category-filter" className="flex items-center gap-2 text-sm font-medium">
                   <Filter className="h-4 w-4" />
                   Kategorija
-                </Label>
+                </label>
                 <select
                   id="category-filter"
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -361,10 +483,10 @@ export default function PositionTrainingsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="type-filter" className="flex items-center gap-2">
+                <label htmlFor="type-filter" className="flex items-center gap-2 text-sm font-medium">
                   <Filter className="h-4 w-4" />
                   Tip obuke
-                </Label>
+                </label>
                 <select
                   id="type-filter"
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -373,7 +495,9 @@ export default function PositionTrainingsPage() {
                 >
                   <option value="all">Svi tipovi</option>
                   {types.map(type => (
-                    <option key={type} value={type}>{type}</option>
+                    <option key={type} value={type}>
+                      {getTrainingTypeLabel(type)}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -407,26 +531,35 @@ export default function PositionTrainingsPage() {
                               disabled={saving}
                             />
                             <div>
-                              <Label
+                              <label
                                 htmlFor={`training-${training.id}`}
                                 className="font-medium cursor-pointer"
                               >
                                 {training.name}
-                              </Label>
-                              <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                              </label>
+                              <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-2 mt-1">
                                 <span className="font-mono">{training.code}</span>
-                                {training.duration_days && (
+                                
+                                {training.training_type && (
+                                  <>
+                                    <Separator orientation="vertical" className="h-3" />
+                                    <span>{getTrainingTypeLabel(training.training_type)}</span>
+                                  </>
+                                )}
+                                
+                                {training.hours_initial_total && (
                                   <>
                                     <Separator orientation="vertical" className="h-3" />
                                     <Clock className="h-3 w-3" />
-                                    <span>{training.duration_days} dana</span>
+                                    <span>Initial: {formatHours(training.hours_initial_total)}</span>
                                   </>
                                 )}
-                                {training.validity_months && (
+                                
+                                {training.validity_period_months && (
                                   <>
                                     <Separator orientation="vertical" className="h-3" />
                                     <CheckCircle className="h-3 w-3" />
-                                    <span>Važi {training.validity_months} mjeseci</span>
+                                    <span>Važi {training.validity_period_months} mjeseci</span>
                                   </>
                                 )}
                               </div>
@@ -450,10 +583,186 @@ export default function PositionTrainingsPage() {
         {/* Sidebar - Trenutne obavezne obuke */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <GraduationCap className="h-5 w-5" />
-              Obavezne Obuke za Poziciju
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <GraduationCap className="h-5 w-5" />
+                Obavezne Obuke za Poziciju
+              </CardTitle>
+              <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="outline" className="h-8 gap-1">
+                    <Plus className="h-3 w-3" />
+                    Dodaj Novu
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px]">
+                  <DialogHeader>
+                    <DialogTitle>Dodaj Novi Tip Obuke</DialogTitle>
+                    <DialogDescription>
+                      Kreirajte novi tip obuke i automatski ga dodajte ovoj poziciji
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <label htmlFor="code" className="text-sm font-medium">
+                        Kod obuke <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        id="code"
+                        value={newTraining.code}
+                        onChange={(e) => setNewTraining({ ...newTraining, code: e.target.value })}
+                        placeholder="Npr. RAMP-SAF-001"
+                        className="font-mono"
+                        disabled={addingTraining}
+                        required
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label htmlFor="name" className="text-sm font-medium">
+                        Naziv obuke <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        id="name"
+                        value={newTraining.name}
+                        onChange={(e) => setNewTraining({ ...newTraining, name: e.target.value })}
+                        placeholder="Npr. Ramp Safety Awareness"
+                        disabled={addingTraining}
+                        required
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label htmlFor="description" className="text-sm font-medium">
+                        Opis obuke
+                      </label>
+                      <Textarea
+                        id="description"
+                        value={newTraining.description}
+                        onChange={(e) => setNewTraining({ ...newTraining, description: e.target.value })}
+                        placeholder="Detaljan opis obuke, ciljevi, teme..."
+                        rows={3}
+                        disabled={addingTraining}
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label htmlFor="category" className="text-sm font-medium">
+                          Kategorija
+                        </label>
+                        <Select
+                          value={newTraining.category}
+                          onValueChange={(value) => setNewTraining({ ...newTraining, category: value })}
+                          disabled={addingTraining}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Izaberite kategoriju" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="safety">Bezbednost</SelectItem>
+                            <SelectItem value="technical">Tehnička</SelectItem>
+                            <SelectItem value="operational">Operativna</SelectItem>
+                            <SelectItem value="administrative">Administrativna</SelectItem>
+                            <SelectItem value="customer_service">Usluga putnicima</SelectItem>
+                            <SelectItem value="management">Menadžment</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label htmlFor="training_type" className="text-sm font-medium">
+                          Tip obuke
+                        </label>
+                        <Select
+                          value={newTraining.training_type}
+                          onValueChange={(value) => setNewTraining({ ...newTraining, training_type: value })}
+                          disabled={addingTraining}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Izaberite tip" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="initial">Initial Training</SelectItem>
+                            <SelectItem value="recurrent">Recurrent Training</SelectItem>
+                            <SelectItem value="re_qualification">Re-qualification</SelectItem>
+                            <SelectItem value="update">Update Training</SelectItem>
+                            <SelectItem value="ojt">OJT Training</SelectItem>
+                            <SelectItem value="refresher">Refresher Training</SelectItem>
+                            <SelectItem value="conversion">Conversion Training</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label htmlFor="validity_months" className="text-sm font-medium">
+                          Period važenja (mjeseci)
+                        </label>
+                        <Input
+                          id="validity_months"
+                          type="number"
+                          min="0"
+                          max="120"
+                          value={newTraining.validity_period_months}
+                          onChange={(e) => setNewTraining({ ...newTraining, validity_period_months: e.target.value })}
+                          placeholder="Npr. 24"
+                          disabled={addingTraining}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label htmlFor="is_mandatory" className="text-sm font-medium">
+                          Obaveznost
+                        </label>
+                        <Select
+                          value={newTraining.is_mandatory}
+                          onValueChange={(value) => setNewTraining({ ...newTraining, is_mandatory: value })}
+                          disabled={addingTraining}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Izaberite" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">Obavezna</SelectItem>
+                            <SelectItem value="false">Preporučena</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowAddDialog(false)}
+                      disabled={addingTraining}
+                    >
+                      Otkaži
+                    </Button>
+                    <Button
+                      onClick={handleAddTraining}
+                      disabled={addingTraining || !newTraining.code || !newTraining.name}
+                      className="gap-2"
+                    >
+                      {addingTraining ? (
+                        <>
+                          <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                          Dodavanje...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" />
+                          Dodaj Obuku
+                        </>
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
             <CardDescription>
               Lista obuka koje su trenutno obavezne za ovu poziciju
             </CardDescription>
@@ -463,6 +772,14 @@ export default function PositionTrainingsPage() {
               <div className="text-center py-8">
                 <AlertTriangle className="h-12 w-12 mx-auto text-yellow-500 mb-4" />
                 <p className="text-muted-foreground">Nema odabranih obaveznih obuka</p>
+                <Button
+                  onClick={() => setShowAddDialog(true)}
+                  variant="outline"
+                  className="mt-4 gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Dodaj prvu obuku
+                </Button>
               </div>
             ) : (
               <div className="space-y-3">
@@ -475,13 +792,18 @@ export default function PositionTrainingsPage() {
                       key={trainingId}
                       className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
                     >
-                      <div>
+                      <div className="flex-1">
                         <p className="font-medium">{training.name}</p>
-                        <div className="text-sm text-muted-foreground">
+                        <div className="text-sm text-muted-foreground flex items-center gap-2">
                           <span className="font-mono">{training.code}</span>
                           {training.category && (
-                            <Badge variant="outline" className="ml-2 text-xs">
+                            <Badge variant="outline" className="text-xs">
                               {getCategoryLabel(training.category)}
+                            </Badge>
+                          )}
+                          {training.training_type && (
+                            <Badge variant="secondary" className="text-xs">
+                              {getTrainingTypeLabel(training.training_type)}
                             </Badge>
                           )}
                         </div>
@@ -491,9 +813,9 @@ export default function PositionTrainingsPage() {
                         size="icon"
                         onClick={() => handleTrainingToggle(trainingId)}
                         disabled={saving}
-                        className="h-8 w-8"
+                        className="h-8 w-8 ml-2 flex-shrink-0"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <X className="h-4 w-4" />
                       </Button>
                     </div>
                   )
@@ -544,6 +866,3 @@ export default function PositionTrainingsPage() {
     </div>
   )
 }
-
-// Dodajte Label komponentu ako već nije importovana
-import { Label } from "@/components/ui/label"

@@ -8,9 +8,9 @@ import Link from "next/link"
 async function getDashboardStats() {
   const supabase = await getSupabaseServerClient()
 
-  // Get total employees
+  // Get total employees - koristite staff tabelu
   const { count: employeesCount } = await supabase
-    .from("employees")
+    .from("staff") // Promenjeno sa "employees" na "staff"
     .select("*", { count: "exact", head: true })
     .eq("status", "active")
 
@@ -48,7 +48,7 @@ async function getDashboardStats() {
     .select(
       `
       *,
-      employees (first_name, last_name),
+      staff (first_name, last_name), // Promenjeno sa employees na staff
       training_types (name)
     `,
     )
@@ -105,7 +105,7 @@ export default async function DashboardPage() {
       {/* Header Section */}
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
             Pregled sistema
           </h1>
           <p className="text-muted-foreground mt-2">
@@ -130,83 +130,98 @@ export default async function DashboardPage() {
 
       {/* Stats Grid - Improved Design */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="group border-blue-200 hover:border-blue-300 transition-colors hover:shadow-lg">
+        <Card className="group border-blue-200 dark:border-blue-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors hover:shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-700">Aktivni Zaposleni</CardTitle>
-            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Users className="h-5 w-5 text-blue-600" />
+            <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              Aktivni Zaposleni
+            </CardTitle>
+            <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-900">{stats.employeesCount}</div>
+            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
+              {stats.employeesCount}
+            </div>
             <div className="flex items-center gap-2 mt-2">
-              <div className="h-2 flex-1 bg-blue-100 rounded-full overflow-hidden">
+              <div className="h-2 flex-1 bg-blue-100 dark:bg-blue-900/30 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full"
                   style={{ width: `${Math.min(stats.employeesCount * 2, 100)}%` }}
                 />
               </div>
-              <span className="text-xs font-medium text-blue-600">
+              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
                 +{Math.floor(stats.employeesCount * 0.12)} u 30 dana
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="group border-purple-200 hover:border-purple-300 transition-colors hover:shadow-lg">
+        <Card className="group border-purple-200 dark:border-purple-800 hover:border-purple-300 dark:hover:border-purple-700 transition-colors hover:shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-purple-700">Predstojeće Obuke</CardTitle>
-            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <GraduationCap className="h-5 w-5 text-purple-600" />
+            <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">
+              Predstojeće Obuke
+            </CardTitle>
+            <div className="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <GraduationCap className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-purple-900">{stats.upcomingTrainings}</div>
+            <div className="text-3xl font-bold text-purple-900 dark:text-purple-100">
+              {stats.upcomingTrainings}
+            </div>
             <div className="flex items-center gap-2 mt-2">
-              <CalendarDays className="h-4 w-4 text-purple-500" />
-              <span className="text-xs text-purple-600">
+              <CalendarDays className="h-4 w-4 text-purple-500 dark:text-purple-400" />
+              <span className="text-xs text-purple-600 dark:text-purple-400">
                 U narednih 7 dana
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="group border-green-200 hover:border-green-300 transition-colors hover:shadow-lg">
+        <Card className="group border-green-200 dark:border-green-800 hover:border-green-300 dark:hover:border-green-700 transition-colors hover:shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-green-700">Aktivni Sertifikati</CardTitle>
-            <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Award className="h-5 w-5 text-green-600" />
+            <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
+              Aktivni Sertifikati
+            </CardTitle>
+            <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-green-900">{stats.activeCertificates}</div>
+            <div className="text-3xl font-bold text-green-900 dark:text-green-100">
+              {stats.activeCertificates}
+            </div>
             <div className="flex items-center gap-2 mt-2">
-              <CheckCircle className="h-4 w-4 text-green-500" />
-              <span className="text-xs text-green-600">
+              <CheckCircle className="h-4 w-4 text-green-500 dark:text-green-400" />
+              <span className="text-xs text-green-600 dark:text-green-400">
                 94% važećih
               </span>
             </div>
           </CardContent>
         </Card>
 
-<Card className="group border-amber-200 hover:border-amber-300 transition-colors hover:shadow-lg">
-  <CardHeader className="flex flex-row items-center justify-between pb-2">
-    <CardTitle className="text-sm font-medium text-amber-700">Završene Obuke</CardTitle>
-    <div className="h-10 w-10 rounded-full bg-amber-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-      <FileCheck className="h-5 w-5 text-amber-600" />
-    </div>
-  </CardHeader>
-  <CardContent>
-    {/* FIXED BELOW: Changed </CardTitle> to </div> */}
-    <div className="text-3xl font-bold text-amber-900">{stats.completedThisMonth}</div> 
-    <div className="flex items-center gap-2 mt-2">
-      <TrendingUp className="h-4 w-4 text-amber-500" />
-      <span className="text-xs text-amber-600">
-        +{Math.floor(stats.completedThisMonth * 0.15)} u odnosu na prošli mesec
-      </span>
-    </div>
-  </CardContent>
-</Card>
+        <Card className="group border-amber-200 dark:border-amber-800 hover:border-amber-300 dark:hover:border-amber-700 transition-colors hover:shadow-lg">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-300">
+              Završene Obuke
+            </CardTitle>
+            <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <FileCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-amber-900 dark:text-amber-100">
+              {stats.completedThisMonth}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <TrendingUp className="h-4 w-4 text-amber-500 dark:text-amber-400" />
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                +{Math.floor(stats.completedThisMonth * 0.15)} u odnosu na prošli mesec
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -228,9 +243,13 @@ export default async function DashboardPage() {
           <CardContent>
             {stats.expiringCertificates.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12">
-                <Award className="h-16 w-16 text-amber-200 mb-4" />
-                <h3 className="text-lg font-semibold text-amber-800">Nema sertifikata koji ističu</h3>
-                <p className="text-sm text-amber-600 mt-1">Svi sertifikati su važeći</p>
+                <Award className="h-16 w-16 text-amber-200 dark:text-amber-800 mb-4" />
+                <h3 className="text-lg font-semibold text-amber-800 dark:text-amber-300">
+                  Nema sertifikata koji ističu
+                </h3>
+                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                  Svi sertifikati su važeći
+                </p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -242,7 +261,7 @@ export default async function DashboardPage() {
                   return (
                     <div
                       key={cert.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 transition-colors"
+                      className="flex items-center justify-between p-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors"
                     >
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center">
@@ -260,7 +279,7 @@ export default async function DashboardPage() {
                       <div className="text-right">
                         <Badge 
                           variant={daysUntilExpiry <= 7 ? "destructive" : "outline"} 
-                          className={daysUntilExpiry <= 7 ? "" : "border-amber-500 text-amber-700"}
+                          className={daysUntilExpiry <= 7 ? "" : "border-amber-500 text-amber-700 dark:text-amber-400"}
                         >
                           {new Date(cert.expiry_date).toLocaleDateString("sr-RS")}
                         </Badge>
@@ -290,7 +309,7 @@ export default async function DashboardPage() {
         <Card className="border-l-4 border-blue-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-blue-600" />
+              <Calendar className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               Nadolazeći događaji
             </CardTitle>
             <p className="text-sm text-muted-foreground">Naredne obuke</p>
@@ -298,9 +317,13 @@ export default async function DashboardPage() {
           <CardContent>
             {stats.upcomingSchedule.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12">
-                <Calendar className="h-16 w-16 text-blue-200 mb-4" />
-                <h3 className="text-lg font-semibold text-blue-800">Nema događaja</h3>
-                <p className="text-sm text-blue-600 mt-1">Planirajte novu obuku</p>
+                <Calendar className="h-16 w-16 text-blue-200 dark:text-blue-800 mb-4" />
+                <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-300">
+                  Nema događaja
+                </h3>
+                <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
+                  Planirajte novu obuku
+                </p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -365,7 +388,9 @@ export default async function DashboardPage() {
             <div className="flex flex-col items-center justify-center py-12">
               <GraduationCap className="h-16 w-16 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold">Nema obuka</h3>
-              <p className="text-sm text-muted-foreground mt-1">Još uvek nema zabeleženih obuka</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Još uvek nema zabeleženih obuka
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -374,25 +399,25 @@ export default async function DashboardPage() {
                   switch (status) {
                     case "completed":
                       return {
-                        color: "bg-green-100 text-green-800 border-green-200",
-                        icon: <CheckCircle className="h-4 w-4 text-green-600" />,
+                        color: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 border-green-200 dark:border-green-800",
+                        icon: <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />,
                         text: "Završeno"
                       }
                     case "scheduled":
                       return {
-                        color: "bg-blue-100 text-blue-800 border-blue-200",
-                        icon: <Calendar className="h-4 w-4 text-blue-600" />,
+                        color: "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800",
+                        icon: <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />,
                         text: "Zakazano"
                       }
                     case "in_progress":
                       return {
-                        color: "bg-amber-100 text-amber-800 border-amber-200",
-                        icon: <Clock className="h-4 w-4 text-amber-600" />,
+                        color: "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800",
+                        icon: <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />,
                         text: "U toku"
                       }
                     default:
                       return {
-                        color: "bg-gray-100 text-gray-800 border-gray-200",
+                        color: "bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-800",
                         icon: null,
                         text: training.status
                       }
@@ -459,7 +484,7 @@ export default async function DashboardPage() {
                   <Users className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-blue-600 transition-colors">
+                  <h3 className="font-semibold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                     Dodaj Zaposlenog
                   </h3>
                   <p className="text-sm text-muted-foreground">
@@ -479,7 +504,7 @@ export default async function DashboardPage() {
                   <GraduationCap className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-purple-600 transition-colors">
+                  <h3 className="font-semibold group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
                     Nova Obuka
                   </h3>
                   <p className="text-sm text-muted-foreground">
@@ -499,7 +524,7 @@ export default async function DashboardPage() {
                   <Award className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-green-600 transition-colors">
+                  <h3 className="font-semibold group-hover:text-green-600 dark:group-hover:text-green-400 transition-colors">
                     Sertifikati
                   </h3>
                   <p className="text-sm text-muted-foreground">
@@ -519,7 +544,7 @@ export default async function DashboardPage() {
                   <TrendingUp className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-amber-600 transition-colors">
+                  <h3 className="font-semibold group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
                     Izveštaji
                   </h3>
                   <p className="text-sm text-muted-foreground">

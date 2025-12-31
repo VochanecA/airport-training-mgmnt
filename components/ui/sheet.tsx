@@ -127,11 +127,31 @@ function SheetDescription({
   )
 }
 
+// Dodajte ovu funkciju za automatsko dodavanje naslova
+function SheetContentWithTitle({
+  children,
+  title = "Dialog",
+  description,
+  ...props
+}: React.ComponentProps<typeof SheetContent> & {
+  title?: string;
+  description?: string;
+}) {
+  return (
+    <SheetContent {...props}>
+      <SheetTitle className="sr-only">{title}</SheetTitle>
+      {description && <SheetDescription className="sr-only">{description}</SheetDescription>}
+      {children}
+    </SheetContent>
+  )
+}
+
 export {
   Sheet,
   SheetTrigger,
   SheetClose,
   SheetContent,
+  SheetContentWithTitle, // Nova komponenta
   SheetHeader,
   SheetFooter,
   SheetTitle,

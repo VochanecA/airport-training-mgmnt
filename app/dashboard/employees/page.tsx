@@ -2,14 +2,24 @@ import { getSupabaseServerClient } from "@/lib/supabase/server"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Plus } from "lucide-react"
+import { Plus, Edit } from "lucide-react"
 import Link from "next/link"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 async function getEmployees() {
   const supabase = await getSupabaseServerClient()
 
-  const { data: employees } = await supabase.from("employees").select("*").order("last_name", { ascending: true })
+  const { data: employees } = await supabase
+    .from("staff")
+    .select(`
+      *,
+      working_positions!inner (
+        title,
+        code,
+        department
+      )
+    `)
+    .order("last_name", { ascending: true })
 
   return employees || []
 }
@@ -62,29 +72,45 @@ export default async function EmployeesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {employees.map((employee: any) => (
-                    <TableRow key={employee.id}>
-                      <TableCell className="font-medium">
-                        {employee.first_name} {employee.last_name}
-                      </TableCell>
-                      <TableCell>{employee.email || "N/A"}</TableCell>
-                      <TableCell>{employee.position || "N/A"}</TableCell>
-                      <TableCell>{employee.department || "N/A"}</TableCell>
-                      <TableCell>{employee.employee_number || "N/A"}</TableCell>
-                      <TableCell>
-                        <Badge variant={employee.status === "active" ? "default" : "secondary"}>
-                          {employee.status === "active" ? "Aktivan" : "Neaktivan"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Link href={`/dashboard/employees/${employee.id}`}>
-                          <Button variant="ghost" size="sm">
-                            Detalji
-                          </Button>
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {employees.map((employee: any) => {
+                    // Izvuci podatke o poziciji - koristimo working_positions kao objekt, ne niz
+                    const position = employee.working_positions || {}
+                    
+                    return (
+                      <TableRow key={employee.id}>
+                        <TableCell className="font-medium">
+                          {employee.first_name} {employee.last_name}
+                        </TableCell>
+                        <TableCell>{employee.email || "N/A"}</TableCell>
+                        <TableCell>
+                          {position.title || "N/A"}
+                        </TableCell>
+                        <TableCell>
+                          {position.department || "N/A"}
+                        </TableCell>
+                        <TableCell>{employee.employee_number || "N/A"}</TableCell>
+                        <TableCell>
+                          <Badge variant={employee.status === "active" ? "default" : "secondary"}>
+                            {employee.status === "active" ? "Aktivan" : "Neaktivan"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Link href={`/dashboard/employees/${employee.id}`}>
+                              <Button variant="ghost" size="sm">
+                                Detalji
+                              </Button>
+                            </Link>
+                            <Link href={`/dashboard/employees/${employee.id}/edit`}>
+                              <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-700">
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
