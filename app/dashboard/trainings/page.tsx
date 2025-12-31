@@ -41,13 +41,13 @@ export default async function TrainingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Obuke</h1>
-          <p className="text-muted-foreground">Upravljajte obukama i rasporedom</p>
+          <h1 className="text-3xl font-bold tracking-tight">Predavanja i Obuke</h1>
+          <p className="text-muted-foreground">Upravljajte obukama i njihovim rasporedom rasporedom</p>
         </div>
         <Link href="/dashboard/trainings/new">
           <Button>
             <Plus className="mr-2 h-4 w-4" />
-            Nova Obuka
+            Novo Predavanje/Obuka
           </Button>
         </Link>
       </div>

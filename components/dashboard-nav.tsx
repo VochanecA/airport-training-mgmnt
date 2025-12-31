@@ -13,7 +13,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 const navigation = [
   { name: "Pregled", href: "/dashboard", icon: BarChart3 },
   { name: "Tipovi Obuka", href: "/dashboard/training-types", icon: Layers },
-  { name: "Obuke", href: "/dashboard/trainings", icon: GraduationCap },
+  { name: "Predavanja i Obuke", href: "/dashboard/trainings", icon: GraduationCap },
   { name: "Radne Pozicije", href: "/dashboard/positions", icon: Briefcase },
   { name: "Zaposleni", href: "/dashboard/employees", icon: Users },
   { name: "Sertifikati", href: "/dashboard/certificates", icon: Award },
