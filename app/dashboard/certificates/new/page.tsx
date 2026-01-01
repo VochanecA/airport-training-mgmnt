@@ -267,7 +267,7 @@ export default function NewCertificatePage() {
     // Potpis
     doc.setFontSize(10)
     doc.setTextColor(100, 100, 100)
-    doc.text('Potpis i pečat:', 20, doc.internal.pageSize.height - 20)
+    doc.text('Potpis i pecat:', 20, doc.internal.pageSize.height - 20)
     doc.line(60, doc.internal.pageSize.height - 20, 120, doc.internal.pageSize.height - 20)
     
     // Footer

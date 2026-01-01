@@ -42,7 +42,8 @@ export function DashboardNav() {
     // Fallback: if still on dashboard after 1 second, force redirect
     setTimeout(() => {
       if (window.location.pathname.startsWith('/dashboard')) {
-        window.location.href = '/login'
+        // window.location.href = '/login'
+        window.location.href = '/'
       }
     }, 1000)
   }

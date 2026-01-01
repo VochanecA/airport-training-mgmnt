@@ -1,560 +1,708 @@
-import { getSupabaseServerClient } from "@/lib/supabase/server"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, GraduationCap, Award, AlertCircle, Calendar, TrendingUp, Clock, CheckCircle, Plus, ArrowRight, CalendarDays, FileCheck, UserCheck } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+"use client"
+
+import { useState, useEffect } from "react"
+import { getSupabaseBrowserClient } from "@/lib/supabase/client"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { 
+  Users, 
+  FileText, 
+  GraduationCap, 
+  Calendar, 
+  AlertTriangle,
+  TrendingUp,
+  Clock,
+  CheckCircle,
+  UserCheck,
+  Briefcase,
+  BarChart3,
+  RefreshCw
+} from "lucide-react"
 import Link from "next/link"
+import { formatDate } from "@/lib/utils"
+import { useToast } from "@/hooks/use-toast"
 
-async function getDashboardStats() {
-  const supabase = await getSupabaseServerClient()
-
-  // Get total employees - koristite staff tabelu
-  const { count: employeesCount } = await supabase
-    .from("staff") // Promenjeno sa "employees" na "staff"
-    .select("*", { count: "exact", head: true })
-    .eq("status", "active")
-
-  // Get upcoming trainings (next 7 days)
-  const sevenDaysFromNow = new Date()
-  sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7)
-  
-  const { count: upcomingTrainings } = await supabase
-    .from("trainings")
-    .select("*", { count: "exact", head: true })
-    .gte("start_date", new Date().toISOString())
-    .lte("start_date", sevenDaysFromNow.toISOString())
-    .eq("status", "scheduled")
-
-  // Get active certificates
-  const { count: activeCertificates } = await supabase
-    .from("certificates")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "valid")
-
-  // Get completed trainings this month
-  const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-  const { count: completedThisMonth } = await supabase
-    .from("trainings")
-    .select("*", { count: "exact", head: true })
-    .gte("end_date", startOfMonth.toISOString())
-    .eq("status", "completed")
-
-  // Get expiring certificates (within 30 days)
-  const thirtyDaysFromNow = new Date()
-  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30)
-
-  const { data: expiringCertificates } = await supabase
-    .from("certificates")
-    .select(
-      `
-      *,
-      staff (first_name, last_name), // Promenjeno sa employees na staff
-      training_types (name)
-    `,
-    )
-    .eq("status", "valid")
-    .lte("expiry_date", thirtyDaysFromNow.toISOString())
-    .gte("expiry_date", new Date().toISOString())
-    .order("expiry_date", { ascending: true })
-    .limit(5)
-
-  // Get recent trainings
-  const { data: recentTrainings } = await supabase
-    .from("trainings")
-    .select(
-      `
-      *,
-      training_types (name)
-    `,
-    )
-    .order("start_date", { ascending: false })
-    .limit(5)
-
-  // Get upcoming scheduled items for calendar
-  const { data: upcomingSchedule } = await supabase
-    .from("trainings")
-    .select(
-      `
-      id,
-      title,
-      start_date,
-      training_types (name)
-    `,
-    )
-    .gte("start_date", new Date().toISOString())
-    .eq("status", "scheduled")
-    .order("start_date", { ascending: true })
-    .limit(4)
-
-  return {
-    employeesCount: employeesCount || 0,
-    upcomingTrainings: upcomingTrainings || 0,
-    activeCertificates: activeCertificates || 0,
-    completedThisMonth: completedThisMonth || 0,
-    expiringCertificates: expiringCertificates || [],
-    recentTrainings: recentTrainings || [],
-    upcomingSchedule: upcomingSchedule || [],
+interface DashboardStats {
+  totalEmployees: number
+  activeEmployees: number
+  totalCertificates: number
+  expiringCertificates: number
+  expiredCertificates: number
+  totalPositions: number
+  totalTrainingTypes: number
+  upcomingExpirations: {
+    today: number
+    week: number
+    month: number
   }
+  recentCertificates: Array<{
+    id: string
+    certificate_number: string
+    issue_date: string
+    expiry_date: string | null
+    staff_name: string
+    training_title: string
+  }>
+  departmentStats: Array<{
+    department: string | null
+    employee_count: number
+    certificate_count: number
+  }>
+  monthlyTrend: Array<{
+    month: string
+    certificates: number
+    employees: number
+  }>
 }
 
-export default async function DashboardPage() {
-  const stats = await getDashboardStats()
+export default function DashboardPage() {
+  const { toast } = useToast()
+  const [stats, setStats] = useState<DashboardStats>({
+    totalEmployees: 0,
+    activeEmployees: 0,
+    totalCertificates: 0,
+    expiringCertificates: 0,
+    expiredCertificates: 0,
+    totalPositions: 0,
+    totalTrainingTypes: 0,
+    upcomingExpirations: {
+      today: 0,
+      week: 0,
+      month: 0
+    },
+    recentCertificates: [],
+    departmentStats: [],
+    monthlyTrend: []
+  })
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const supabase = getSupabaseBrowserClient()
+
+  const loadDashboardData = async () => {
+    try {
+      setRefreshing(true)
+      
+      // Učitaj podatke paralelno za bolju performance
+      const [
+        employeesData,
+        certificatesData,
+        positionsData,
+        trainingTypesData,
+        recentCertificatesData,
+        departmentStatsData
+      ] = await Promise.all([
+        // 1. Podaci o zaposlenima
+        supabase
+          .from("staff")
+          .select("id, status, position_id")
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          }),
+
+        // 2. Podaci o sertifikatima
+        supabase
+          .from("training_certificate_records")
+          .select("id, issue_date, expiry_date, certificate_number, staff_id, training_master_id")
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          }),
+
+        // 3. Podaci o pozicijama
+        supabase
+          .from("working_positions")
+          .select("id, is_active")
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          }),
+
+        // 4. Podaci o tipovima obuka
+        supabase
+          .from("training_certificates_master")
+          .select("id, is_active")
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          }),
+
+        // 5. Poslednjih 5 sertifikata sa detaljima
+        supabase
+          .from("training_certificate_records")
+          .select(`
+            id,
+            certificate_number,
+            issue_date,
+            expiry_date,
+            staff:staff_id (first_name, last_name),
+            training_certificates_master:training_master_id (title)
+          `)
+          .order("issue_date", { ascending: false })
+          .limit(5)
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          }),
+
+        // 6. Statistika po odjeljenjima
+        supabase
+          .from("staff")
+          .select(`
+            id,
+            working_positions:position_id (department),
+            training_certificate_records!inner (id)
+          `)
+          .eq("status", "active")
+          .then(({ data, error }) => {
+            if (error) throw error
+            return data || []
+          })
+      ])
+
+      // Izračunaj statistikе
+      const today = new Date()
+      const weekFromNow = new Date()
+      weekFromNow.setDate(today.getDate() + 7)
+      const monthFromNow = new Date()
+      monthFromNow.setDate(today.getDate() + 30)
+
+      // Broj zaposlenih
+      const totalEmployees = employeesData.length
+      const activeEmployees = employeesData.filter(e => e.status === "active").length
+
+      // Broj sertifikata
+      const totalCertificates = certificatesData.length
+
+      // Istekli sertifikati
+      const expiredCertificates = certificatesData.filter(cert => {
+        if (!cert.expiry_date) return false
+        return new Date(cert.expiry_date) < today
+      }).length
+
+      // Sertifikati koji ističu u narednih 30 dana
+      const expiringCertificates = certificatesData.filter(cert => {
+        if (!cert.expiry_date) return false
+        const expiryDate = new Date(cert.expiry_date)
+        return expiryDate >= today && expiryDate <= monthFromNow
+      }).length
+
+      // Broj pozicija i tipova obuka
+      const totalPositions = positionsData.length
+      const totalTrainingTypes = trainingTypesData.length
+
+      // Nadolazeći isteci
+      const upcomingExpirations = {
+        today: certificatesData.filter(cert => {
+          if (!cert.expiry_date) return false
+          const expiryDate = new Date(cert.expiry_date)
+          return expiryDate.toDateString() === today.toDateString()
+        }).length,
+        week: certificatesData.filter(cert => {
+          if (!cert.expiry_date) return false
+          const expiryDate = new Date(cert.expiry_date)
+          return expiryDate > today && expiryDate <= weekFromNow
+        }).length,
+        month: certificatesData.filter(cert => {
+          if (!cert.expiry_date) return false
+          const expiryDate = new Date(cert.expiry_date)
+          return expiryDate > weekFromNow && expiryDate <= monthFromNow
+        }).length
+      }
+
+      // Oбради poslednje sertifikate
+      const recentCertificates = recentCertificatesData.map(cert => ({
+        id: cert.id,
+        certificate_number: cert.certificate_number || "N/A",
+        issue_date: cert.issue_date,
+        expiry_date: cert.expiry_date,
+        staff_name: cert.staff 
+          ? `${cert.staff.first_name} ${cert.staff.last_name}`
+          : "Nepoznato",
+        training_title: cert.training_certificates_master?.title || "Opšti sertifikat"
+      }))
+
+      // Oбради statistiku po odjeljenjima
+      const departmentMap = new Map<string, { employees: number; certificates: number }>()
+      
+      departmentStatsData.forEach(employee => {
+        const department = employee.working_positions?.department || "Bez odjeljenja"
+        const current = departmentMap.get(department) || { employees: 0, certificates: 0 }
+        
+        current.employees++
+        current.certificates += employee.training_certificate_records?.length || 0
+        
+        departmentMap.set(department, current)
+      })
+
+      const departmentStats = Array.from(departmentMap.entries()).map(([department, counts]) => ({
+        department: department === "Bez odjeljenja" ? null : department,
+        employee_count: counts.employees,
+        certificate_count: counts.certificates
+      })).sort((a, b) => b.employee_count - a.employee_count).slice(0, 5)
+
+      // Izračunaj mesečni trend (poslednjih 6 meseci)
+      const monthlyTrend = []
+      const currentMonth = today.getMonth()
+      const currentYear = today.getFullYear()
+      
+      for (let i = 5; i >= 0; i--) {
+        const monthDate = new Date(currentYear, currentMonth - i, 1)
+        const monthStr = monthDate.toLocaleDateString('sr-RS', { month: 'short' })
+        
+        // Broj sertifikata izdatih u ovom mesecu
+        const monthCertificates = certificatesData.filter(cert => {
+          const certDate = new Date(cert.issue_date)
+          return certDate.getMonth() === monthDate.getMonth() && 
+                 certDate.getFullYear() === monthDate.getFullYear()
+        }).length
+
+        // Broj zaposlenih dodatiх u ovom mesecu (simulacija - treba da dodate hire_date polje)
+        const monthEmployees = 0 // Ovo treba da se implementira ako imate hire_date
+
+        monthlyTrend.push({
+          month: monthStr,
+          certificates: monthCertificates,
+          employees: monthEmployees
+        })
+      }
+
+      setStats({
+        totalEmployees,
+        activeEmployees,
+        totalCertificates,
+        expiringCertificates,
+        expiredCertificates,
+        totalPositions,
+        totalTrainingTypes,
+        upcomingExpirations,
+        recentCertificates,
+        departmentStats,
+        monthlyTrend
+      })
+
+    } catch (error) {
+      console.error("Greška pri učitavanju dashboard podataka:", error)
+      toast({
+        title: "Greška",
+        description: "Došlo je do greške pri učitavanju podataka",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDashboardData()
+  }, [])
+
+  const handleRefresh = () => {
+    loadDashboardData()
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[600px]">
+        <div className="text-center">
+          <div className="inline-block h-12 w-12 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+          <p className="mt-4 text-lg text-muted-foreground">Učitavanje dashboard podataka...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="space-y-8">
-      {/* Header Section */}
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
-            Pregled sistema
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Dobrodošli u sistem za upravljanje obukama i sertifikatima
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Pregled sistema za upravljanje obukama
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild className="gap-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
-            <Link href="/dashboard/trainings/new">
-              <Plus className="h-4 w-4" />
-              Nova obuka
-            </Link>
-          </Button>
-          <Button variant="outline" asChild className="gap-2">
-            <Link href="/dashboard/reports">
-              <TrendingUp className="h-4 w-4" />
-              Izveštaji
-            </Link>
-          </Button>
-        </div>
+        <Button 
+          onClick={handleRefresh} 
+          variant="outline" 
+          size="sm"
+          className="gap-2"
+          disabled={refreshing}
+        >
+          {refreshing ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          Osvježi
+        </Button>
       </div>
 
-      {/* Stats Grid - Improved Design */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="group border-blue-200 dark:border-blue-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors hover:shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              Aktivni Zaposleni
-            </CardTitle>
-            <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            </div>
+      {/* Glavne statistike */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ukupno zaposlenih</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
-              {stats.employeesCount}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <div className="h-2 flex-1 bg-blue-100 dark:bg-blue-900/30 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full"
-                  style={{ width: `${Math.min(stats.employeesCount * 2, 100)}%` }}
-                />
-              </div>
-              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                +{Math.floor(stats.employeesCount * 0.12)} u 30 dana
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group border-purple-200 dark:border-purple-800 hover:border-purple-300 dark:hover:border-purple-700 transition-colors hover:shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">
-              Predstojeće Obuke
-            </CardTitle>
-            <div className="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <GraduationCap className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-purple-900 dark:text-purple-100">
-              {stats.upcomingTrainings}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <CalendarDays className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-              <span className="text-xs text-purple-600 dark:text-purple-400">
-                U narednih 7 dana
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group border-green-200 dark:border-green-800 hover:border-green-300 dark:hover:border-green-700 transition-colors hover:shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
-              Aktivni Sertifikati
-            </CardTitle>
-            <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-green-900 dark:text-green-100">
-              {stats.activeCertificates}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <CheckCircle className="h-4 w-4 text-green-500 dark:text-green-400" />
-              <span className="text-xs text-green-600 dark:text-green-400">
-                94% važećih
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group border-amber-200 dark:border-amber-800 hover:border-amber-300 dark:hover:border-amber-700 transition-colors hover:shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-300">
-              Završene Obuke
-            </CardTitle>
-            <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <FileCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-amber-900 dark:text-amber-100">
-              {stats.completedThisMonth}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <TrendingUp className="h-4 w-4 text-amber-500 dark:text-amber-400" />
-              <span className="text-xs text-amber-600 dark:text-amber-400">
-                +{Math.floor(stats.completedThisMonth * 0.15)} u odnosu na prošli mesec
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Expiring Certificates - Improved */}
-        <Card className="lg:col-span-2 border-l-4 border-amber-500">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-amber-600" />
-                Sertifikati koji ističu
-              </CardTitle>
-              <p className="text-sm text-muted-foreground">U narednih 30 dana</p>
-            </div>
-            <Badge variant="destructive" className="gap-2">
-              {stats.expiringCertificates.length}
-              <AlertCircle className="h-3 w-3" />
-            </Badge>
-          </CardHeader>
-          <CardContent>
-            {stats.expiringCertificates.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Award className="h-16 w-16 text-amber-200 dark:text-amber-800 mb-4" />
-                <h3 className="text-lg font-semibold text-amber-800 dark:text-amber-300">
-                  Nema sertifikata koji ističu
-                </h3>
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-                  Svi sertifikati su važeći
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {stats.expiringCertificates.map((cert: any) => {
-                  const daysUntilExpiry = Math.ceil(
-                    (new Date(cert.expiry_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
-                  )
-                  
-                  return (
-                    <div
-                      key={cert.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center">
-                          <AlertCircle className="h-5 w-5 text-white" />
-                        </div>
-                        <div>
-                          <p className="font-medium">
-                            {cert.employees?.first_name} {cert.employees?.last_name}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {cert.training_types?.name || "N/A"}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <Badge 
-                          variant={daysUntilExpiry <= 7 ? "destructive" : "outline"} 
-                          className={daysUntilExpiry <= 7 ? "" : "border-amber-500 text-amber-700 dark:text-amber-400"}
-                        >
-                          {new Date(cert.expiry_date).toLocaleDateString("sr-RS")}
-                        </Badge>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {daysUntilExpiry} dana
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            {stats.expiringCertificates.length > 0 && (
-              <div className="mt-6">
-                <Button variant="outline" className="w-full gap-2" asChild>
-                  <Link href="/dashboard/certificates">
-                    Pregled svih sertifikata
-                    <ArrowRight className="h-4 w-4" />
-                  </Link>
+            <div className="text-2xl font-bold">{stats.totalEmployees}</div>
+            <p className="text-xs text-muted-foreground">
+              <Badge variant="secondary" className="mr-2">
+                {stats.activeEmployees} aktivnih
+              </Badge>
+              {stats.totalEmployees - stats.activeEmployees} neaktivnih
+            </p>
+            <div className="mt-2">
+              <Link href="/dashboard/employees">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  Pregledaj sve
                 </Button>
-              </div>
-            )}
+              </Link>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Upcoming Schedule */}
-        <Card className="border-l-4 border-blue-500">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Izdati sertifikati</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalCertificates}</div>
+            <div className="flex flex-wrap gap-1 mt-2">
+              {stats.expiringCertificates > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  {stats.expiringCertificates} ističe
+                </Badge>
+              )}
+              {stats.expiredCertificates > 0 && (
+                <Badge variant="outline" className="text-xs">
+                  {stats.expiredCertificates} isteklo
+                </Badge>
+              )}
+            </div>
+            <div className="mt-2">
+              <Link href="/dashboard/certificates">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  Upravljaj sertifikatima
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Radne pozicije</CardTitle>
+            <Briefcase className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalPositions}</div>
+            <p className="text-xs text-muted-foreground">
+              Definisane radne pozicije u sistemu
+            </p>
+            <div className="mt-2">
+              <Link href="/dashboard/positions">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  Pregledaj pozicije
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Tipovi obuka</CardTitle>
+            <GraduationCap className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalTrainingTypes}</div>
+            <p className="text-xs text-muted-foreground">
+              Dostupni tipovi obuka i sertifikata
+            </p>
+            <div className="mt-2">
+              <Link href="/dashboard/training-types">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  Upravljaj obukama
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Nadolazeći isteci i poslednje aktivnosti */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+        {/* Nadolazeći isteci */}
+        <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              Nadolazeći događaji
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Nadolazeći isteci
             </CardTitle>
-            <p className="text-sm text-muted-foreground">Naredne obuke</p>
+            <CardDescription>
+              Pregled sertifikata koji ističu u bliskoj budućnosti
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {stats.upcomingSchedule.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Calendar className="h-16 w-16 text-blue-200 dark:text-blue-800 mb-4" />
-                <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-300">
-                  Nema događaja
-                </h3>
-                <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
-                  Planirajte novu obuku
-                </p>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-amber-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Calendar className="h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="font-medium">Ističe danas</p>
+                    <p className="text-sm text-muted-foreground">Sertifikati koji ističu danas</p>
+                  </div>
+                </div>
+                <div className="text-2xl font-bold text-amber-700">
+                  {stats.upcomingExpirations.today}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Clock className="h-5 w-5 text-red-600" />
+                  <div>
+                    <p className="font-medium">Ističe u narednih 7 dana</p>
+                    <p className="text-sm text-muted-foreground">Hitne obaveze</p>
+                  </div>
+                </div>
+                <div className="text-2xl font-bold text-red-700">
+                  {stats.upcomingExpirations.week}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <TrendingUp className="h-5 w-5 text-blue-600" />
+                  <div>
+                    <p className="font-medium">Ističe u narednih 30 dana</p>
+                    <p className="text-sm text-muted-foreground">Planirane obnove</p>
+                  </div>
+                </div>
+                <div className="text-2xl font-bold text-blue-700">
+                  {stats.upcomingExpirations.month}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <Link href="/dashboard/training-expiry">
+                  <Button variant="outline" className="w-full">
+                    <AlertTriangle className="mr-2 h-4 w-4" />
+                    Detaljan pregled isteka
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Poslednje izdati sertifikati */}
+        <Card className="lg:col-span-4">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-blue-500" />
+              Zadnje izdati sertifikati
+            </CardTitle>
+            <CardDescription>
+              Najnovije aktivnosti u sistemu
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {stats.recentCertificates.length === 0 ? (
+              <div className="text-center py-8">
+                <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">Nema novih sertifikata</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {stats.upcomingSchedule.map((item: any) => (
-                  <div key={item.id} className="space-y-2">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{item.title}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {item.training_types?.name || "Obuka"}
-                        </p>
+              <div className="space-y-3">
+                {stats.recentCertificates.map((cert) => (
+                  <div
+                    key={cert.id}
+                    className="flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="bg-blue-100 p-2 rounded-full">
+                        <UserCheck className="h-4 w-4 text-blue-600" />
                       </div>
-                      <Badge variant="secondary" className="ml-2">
-                        {new Date(item.start_date).toLocaleDateString("sr-RS", {
-                          day: "numeric",
-                          month: "short",
-                        })}
-                      </Badge>
+                      <div>
+                        <p className="font-medium">
+                          {cert.staff_name}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {cert.training_title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge variant="outline" className="text-xs">
+                            {cert.certificate_number}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(cert.issue_date)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {new Date(item.start_date).toLocaleTimeString("sr-RS", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </div>
+                    <Link href={`/dashboard/certificates/${cert.id}`}>
+                      <Button variant="ghost" size="sm">
+                        Pregled
+                      </Button>
+                    </Link>
                   </div>
                 ))}
               </div>
             )}
-            <div className="mt-6">
-              <Button variant="outline" className="w-full gap-2" asChild>
-                <Link href="/dashboard/schedule">
-                  Prikaži kalendar
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
+            <div className="pt-4">
+              <Link href="/dashboard/certificates">
+                <Button variant="outline" className="w-full">
+                  Pregledaj sve sertifikate
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Recent Trainings - Improved */}
+      {/* Statistika po odjeljenjima */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <GraduationCap className="h-5 w-5 text-primary" />
-              Nedavne Obuke
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">Poslednjih 5 obuka</p>
-          </div>
-          <Button variant="ghost" size="sm" asChild className="gap-2">
-            <Link href="/dashboard/trainings">
-              Vidi sve
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-purple-500" />
+            Statistika po odjeljenjima ili sluzbama
+          </CardTitle>
+          <CardDescription>
+            Distribucija zaposlenih i sertifikata po organizacionim jedinicama
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {stats.recentTrainings.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <GraduationCap className="h-16 w-16 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold">Nema obuka</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Još uvek nema zabeleženih obuka
+          {stats.departmentStats.length === 0 ? (
+            <div className="text-center py-8">
+              <Briefcase className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">Nema podataka o odjeljenjima</p>
+              <p className="text-sm text-muted-foreground">
+                Dodajte odjeljenja u radne pozicije
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {stats.recentTrainings.map((training: any) => {
-                const getStatusConfig = (status: string) => {
-                  switch (status) {
-                    case "completed":
-                      return {
-                        color: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 border-green-200 dark:border-green-800",
-                        icon: <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />,
-                        text: "Završeno"
-                      }
-                    case "scheduled":
-                      return {
-                        color: "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800",
-                        icon: <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />,
-                        text: "Zakazano"
-                      }
-                    case "in_progress":
-                      return {
-                        color: "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800",
-                        icon: <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />,
-                        text: "U toku"
-                      }
-                    default:
-                      return {
-                        color: "bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-800",
-                        icon: null,
-                        text: training.status
-                      }
-                  }
-                }
-                
-                const statusConfig = getStatusConfig(training.status)
-                
-                return (
-                  <div
-                    key={training.id}
-                    className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-gradient-to-r from-primary/10 to-primary/5 flex items-center justify-center">
-                          <GraduationCap className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <p className="font-medium">{training.title}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge variant="outline" className="text-xs">
-                              {training.training_types?.name || "N/A"}
-                            </Badge>
-                            <Badge 
-                              variant="outline" 
-                              className={`text-xs ${statusConfig.color} border`}
-                            >
-                              <div className="flex items-center gap-1">
-                                {statusConfig.icon}
-                                {statusConfig.text}
-                              </div>
-                            </Badge>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground ml-13">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {new Date(training.start_date).toLocaleDateString("sr-RS")}
-                        </span>
-                      </div>
-                    </div>
-                    <Button size="sm" variant="ghost" asChild>
-                      <Link href={`/dashboard/trainings/${training.id}`}>
-                        Detalji
-                      </Link>
-                    </Button>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+              {stats.departmentStats.map((dept, index) => (
+                <div
+                  key={index}
+                  className="border rounded-lg p-4 hover:bg-gray-50"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-semibold">
+                      {dept.department || "Bez odjeljenja"}
+                    </h4>
+                    <Badge variant="secondary">
+                      {dept.employee_count} zap.
+                    </Badge>
                   </div>
-                )
-              })}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Zaposleni:</span>
+                      <span className="font-medium">{dept.employee_count}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Sertifikati:</span>
+                      <span className="font-medium">{dept.certificate_count}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Prosek:</span>
+                      <span className="font-medium">
+                        {dept.employee_count > 0 
+                          ? (dept.certificate_count / dept.employee_count).toFixed(1)
+                          : "0"
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="group cursor-pointer transition-all hover:-translate-y-1 hover:shadow-lg">
-          <Link href="/dashboard/employees/new" className="block">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 p-3">
-                  <Users className="h-6 w-6 text-white" />
+      {/* Brzi linkovi za akcije */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Link href="/dashboard/employees/new">
+          <Card className="hover:bg-blue-50 cursor-pointer transition-colors">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-100 p-2 rounded-full">
+                  <Users className="h-5 w-5 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                    Dodaj Zaposlenog
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    Dodajte novog zaposlenog u sistem
-                  </p>
+                  <p className="font-medium">Dodaj zaposlenog</p>
+                  <p className="text-sm text-muted-foreground">Novi zaposleni u sistem</p>
                 </div>
               </div>
             </CardContent>
-          </Link>
-        </Card>
+          </Card>
+        </Link>
 
-        <Card className="group cursor-pointer transition-all hover:-translate-y-1 hover:shadow-lg">
-          <Link href="/dashboard/trainings/new" className="block">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-gradient-to-r from-purple-500 to-pink-500 p-3">
-                  <GraduationCap className="h-6 w-6 text-white" />
+        <Link href="/dashboard/certificates/new">
+          <Card className="hover:bg-green-50 cursor-pointer transition-colors">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-green-100 p-2 rounded-full">
+                  <FileText className="h-5 w-5 text-green-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
-                    Nova Obuka
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    Planirajte novu obuku za zaposlene
-                  </p>
+                  <p className="font-medium">Izdaj sertifikat</p>
+                  <p className="text-sm text-muted-foreground">Nova obuka završena</p>
                 </div>
               </div>
             </CardContent>
-          </Link>
-        </Card>
+          </Card>
+        </Link>
 
-        <Card className="group cursor-pointer transition-all hover:-translate-y-1 hover:shadow-lg">
-          <Link href="/dashboard/certificates" className="block">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-gradient-to-r from-green-500 to-emerald-500 p-3">
-                  <Award className="h-6 w-6 text-white" />
+        <Link href="/dashboard/positions/new">
+          <Card className="hover:bg-purple-50 cursor-pointer transition-colors">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-purple-100 p-2 rounded-full">
+                  <Briefcase className="h-5 w-5 text-purple-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-green-600 dark:group-hover:text-green-400 transition-colors">
-                    Sertifikati
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    Pregled i upravljanje sertifikatima
-                  </p>
+                  <p className="font-medium">Dodaj poziciju</p>
+                  <p className="text-sm text-muted-foreground">Nova radna pozicija</p>
                 </div>
               </div>
             </CardContent>
-          </Link>
-        </Card>
+          </Card>
+        </Link>
 
-        <Card className="group cursor-pointer transition-all hover:-translate-y-1 hover:shadow-lg">
-          <Link href="/dashboard/reports" className="block">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-gradient-to-r from-amber-500 to-orange-500 p-3">
-                  <TrendingUp className="h-6 w-6 text-white" />
+        <Link href="/dashboard/training-types/new">
+          <Card className="hover:bg-orange-50 cursor-pointer transition-colors">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-orange-100 p-2 rounded-full">
+                  <GraduationCap className="h-5 w-5 text-orange-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
-                    Izveštaji
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    Generišite izveštaje i analize
-                  </p>
+                  <p className="font-medium">Dodaj obuku</p>
+                  <p className="text-sm text-muted-foreground">Novi tip obuke</p>
                 </div>
               </div>
             </CardContent>
-          </Link>
-        </Card>
+          </Card>
+        </Link>
+      </div>
+
+      {/* Footer info */}
+      <div className="text-center text-sm text-muted-foreground pt-4 border-t">
+        <p>
+          Sistem za upravljanje obukama • Poslednje ažuriranje: {new Date().toLocaleDateString('sr-RS')}
+        </p>
+        <p className="mt-1">
+          Ukupno podataka: {stats.totalEmployees} zaposlenih • {stats.totalCertificates} sertifikata • {stats.totalPositions} pozicija
+        </p>
       </div>
     </div>
   )
