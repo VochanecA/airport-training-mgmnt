@@ -1,0 +1,672 @@
+-- Training Management Database Schema
+-- Reorganized script with correct table order and dependencies
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================================================
+-- LEVEL 1: Base tables (no foreign key dependencies)
+-- ============================================================================
+
+-- Training certificate types (base reference table)
+CREATE TABLE public.training_certificate_types (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  code character varying NOT NULL UNIQUE,
+  name character varying NOT NULL,
+  description text,
+  category character varying,
+  validity_period_months integer,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificate_types_pkey PRIMARY KEY (id)
+);
+
+-- Training types (base reference table)
+CREATE TABLE public.training_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code character varying NOT NULL UNIQUE,
+  name character varying NOT NULL,
+  description text,
+  training_type character varying CHECK (training_type::text = ANY (ARRAY['initial'::character varying, 'recurrent'::character varying, 're_qualification'::character varying, 'update'::character varying, 'ojt'::character varying, 'refresher'::character varying, 'conversion'::character varying]::text[])),
+  category character varying CHECK (category::text = ANY (ARRAY['safety'::character varying, 'technical'::character varying, 'operational'::character varying, 'administrative'::character varying, 'customer_service'::character varying, 'management'::character varying]::text[])),
+  hours_initial_theory numeric,
+  hours_initial_practical numeric,
+  hours_initial_ojt numeric,
+  hours_initial_total numeric,
+  hours_recurrent_theory numeric,
+  hours_recurrent_practical numeric,
+  hours_recurrent_ojt numeric,
+  hours_recurrent_total numeric,
+  hours_re_qualification_theory numeric,
+  hours_re_qualification_practical numeric,
+  hours_re_qualification_ojt numeric,
+  hours_re_qualification_total numeric,
+  hours_update_theory numeric,
+  hours_update_practical numeric,
+  hours_update_ojt numeric,
+  hours_update_total numeric,
+  hours_ojt_theory numeric,
+  hours_ojt_practical numeric,
+  hours_ojt_total numeric,
+  validity_period_months numeric,
+  renewal_notice_days integer,
+  is_mandatory boolean DEFAULT true,
+  difficulty_level character varying CHECK (difficulty_level::text = ANY (ARRAY['basic'::character varying, 'intermediate'::character varying, 'advanced'::character varying, 'expert'::character varying]::text[])),
+  reference_standard character varying,
+  passing_score integer CHECK (passing_score >= 0 AND passing_score <= 100),
+  requires_practical boolean DEFAULT false,
+  requires_written_exam boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_types_pkey PRIMARY KEY (id)
+);
+
+-- Working positions (base reference table)
+CREATE TABLE public.working_positions (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  department character varying,
+  description text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT working_positions_pkey PRIMARY KEY (id)
+);
+
+-- ============================================================================
+-- LEVEL 2: Tables with single-level dependencies
+-- ============================================================================
+
+-- Training certificates master (depends on training_certificate_types)
+CREATE TABLE public.training_certificates_master (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  type_id uuid,
+  code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  description text,
+  training_provider character varying,
+  duration_hours numeric,
+  validity_months integer,
+  renewal_before_days integer DEFAULT 30,
+  is_mandatory boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificates_master_pkey PRIMARY KEY (id),
+  CONSTRAINT training_certificates_master_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.training_certificate_types(id)
+);
+
+-- Staff (depends on working_positions)
+CREATE TABLE public.staff (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  employee_number character varying NOT NULL UNIQUE,
+  first_name character varying NOT NULL,
+  last_name character varying NOT NULL,
+  email character varying UNIQUE,
+  phone character varying,
+  position_id uuid,
+  staff_type character varying DEFAULT 'employee'::character varying,
+  status character varying DEFAULT 'active'::character varying,
+  hire_date date,
+  termination_date date,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT staff_pkey PRIMARY KEY (id),
+  CONSTRAINT staff_position_id_fkey FOREIGN KEY (position_id) REFERENCES public.working_positions(id)
+);
+
+-- Trainings (depends on training_types)
+CREATE TABLE public.trainings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  training_type_id uuid,
+  title character varying NOT NULL,
+  description text,
+  instructor character varying,
+  location character varying,
+  start_date timestamp with time zone NOT NULL,
+  end_date timestamp with time zone NOT NULL,
+  capacity integer,
+  status character varying DEFAULT 'scheduled'::character varying,
+  training_hours_theory numeric,
+  training_hours_practical numeric,
+  training_hours_ojt numeric,
+  training_hours_total numeric,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT trainings_pkey PRIMARY KEY (id),
+  CONSTRAINT trainings_training_type_id_fkey FOREIGN KEY (training_type_id) REFERENCES public.training_types(id)
+);
+
+-- ============================================================================
+-- LEVEL 3: Tables with dependencies on Level 2 tables
+-- ============================================================================
+
+-- Instructors (depends on staff)
+CREATE TABLE public.instructors (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  instructor_code character varying UNIQUE,
+  specializations text[],
+  certification_number character varying,
+  certification_expiry date,
+  status character varying DEFAULT 'active'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT instructors_pkey PRIMARY KEY (id),
+  CONSTRAINT instructors_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id)
+);
+
+-- Courses (depends on training_certificates_master)
+CREATE TABLE public.courses (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  description text,
+  course_type character varying NOT NULL,
+  training_master_id uuid,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  location character varying,
+  max_attendees integer,
+  cost numeric,
+  currency character varying DEFAULT 'EUR'::character varying,
+  status character varying DEFAULT 'planned'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT courses_pkey PRIMARY KEY (id),
+  CONSTRAINT courses_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id)
+);
+
+-- Position required training (depends on working_positions and training_certificates_master)
+CREATE TABLE public.position_required_training (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  position_id uuid,
+  training_master_id uuid,
+  is_mandatory boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT position_required_training_pkey PRIMARY KEY (id),
+  CONSTRAINT position_required_training_position_id_fkey FOREIGN KEY (position_id) REFERENCES public.working_positions(id),
+  CONSTRAINT position_required_training_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id)
+);
+
+-- Training certificate records (depends on staff and training_certificates_master)
+CREATE TABLE public.training_certificate_records (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  training_master_id uuid,
+  certificate_number character varying,
+  issue_date date NOT NULL,
+  expiry_date date,
+  completion_date date,
+  grade character varying,
+  notes text,
+  training_provider character varying,
+  instructor_name character varying,
+  status character varying DEFAULT 'valid'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificate_records_pkey PRIMARY KEY (id),
+  CONSTRAINT training_certificate_records_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id),
+  CONSTRAINT training_certificate_records_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id)
+);
+
+-- Training alerts (depends on staff and training_certificates_master)
+CREATE TABLE public.training_alerts (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  training_master_id uuid,
+  alert_type character varying NOT NULL,
+  alert_date date NOT NULL,
+  expiry_date date,
+  days_until_expiry integer,
+  is_acknowledged boolean DEFAULT false,
+  acknowledged_at timestamp with time zone,
+  acknowledged_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_alerts_pkey PRIMARY KEY (id),
+  CONSTRAINT training_alerts_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id),
+  CONSTRAINT training_alerts_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id),
+  CONSTRAINT training_alerts_acknowledged_by_fkey FOREIGN KEY (acknowledged_by) REFERENCES public.staff(id)
+);
+
+-- ============================================================================
+-- LEVEL 4: Tables with dependencies on Level 3 tables
+-- ============================================================================
+
+-- Course instructors (depends on courses and instructors)
+CREATE TABLE public.course_instructors (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_id uuid,
+  instructor_id uuid,
+  role character varying DEFAULT 'primary'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT course_instructors_pkey PRIMARY KEY (id),
+  CONSTRAINT course_instructors_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id),
+  CONSTRAINT course_instructors_instructor_id_fkey FOREIGN KEY (instructor_id) REFERENCES public.instructors(id)
+);
+
+-- Course attendees (depends on courses and staff)
+CREATE TABLE public.course_attendees (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_id uuid,
+  staff_id uuid,
+  enrollment_date timestamp with time zone DEFAULT now(),
+  attendance_status character varying DEFAULT 'enrolled'::character varying,
+  completion_status character varying,
+  grade character varying,
+  certificate_issued boolean DEFAULT false,
+  certificate_number character varying,
+  certificate_issue_date date,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT course_attendees_pkey PRIMARY KEY (id),
+  CONSTRAINT course_attendees_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id),
+  CONSTRAINT course_attendees_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id)
+);
+
+-- ============================================================================
+-- Indexes for better performance (optional but recommended)
+-- ============================================================================
+
+-- Indexes on foreign keys
+CREATE INDEX idx_staff_position_id ON public.staff(position_id);
+CREATE INDEX idx_instructors_staff_id ON public.instructors(staff_id);
+CREATE INDEX idx_courses_training_master_id ON public.courses(training_master_id);
+CREATE INDEX idx_course_attendees_course_id ON public.course_attendees(course_id);
+CREATE INDEX idx_course_attendees_staff_id ON public.course_attendees(staff_id);
+CREATE INDEX idx_course_instructors_course_id ON public.course_instructors(course_id);
+CREATE INDEX idx_course_instructors_instructor_id ON public.course_instructors(instructor_id);
+CREATE INDEX idx_training_alerts_staff_id ON public.training_alerts(staff_id);
+CREATE INDEX idx_training_certificate_records_staff_id ON public.training_certificate_records(staff_id);
+
+-- Indexes on commonly queried fields
+CREATE INDEX idx_staff_status ON public.staff(status);
+CREATE INDEX idx_staff_employee_number ON public.staff(employee_number);
+CREATE INDEX idx_courses_status ON public.courses(status);
+CREATE INDEX idx_courses_start_date ON public.courses(start_date);
+CREATE INDEX idx_training_alerts_alert_date ON public.training_alerts(alert_date);
+CREATE INDEX idx_training_alerts_is_acknowledged ON public.training_alerts(is_acknowledged);
+
+-- ============================================================================
+-- Comments (optional - for documentation)
+-- ============================================================================
+
+COMMENT ON TABLE public.training_certificate_types IS 'Master list of training certificate type categories';
+COMMENT ON TABLE public.training_types IS 'Defines different types of training programs with their requirements';
+COMMENT ON TABLE public.working_positions IS 'Job positions within the organization';
+COMMENT ON TABLE public.staff IS 'Employee and staff member records';
+COMMENT ON TABLE public.instructors IS 'Certified instructors who can deliver training';
+COMMENT ON TABLE public.courses IS 'Scheduled training courses and sessions';
+COMMENT ON TABLE public.training_certificates_master IS 'Master catalog of available training certificates';
+COMMENT ON TABLE public.course_attendees IS 'Staff members enrolled in or attending courses';
+COMMENT ON TABLE public.training_certificate_records IS 'Individual training certificates issued to staff';
+COMMENT ON TABLE public.training_alerts IS 'Notifications for expiring or required training';
+
+
+-- Opcija 1: Promijeni foreign key da pokazuje na training_types
+ALTER TABLE position_required_training 
+  DROP CONSTRAINT position_required_training_training_master_id_fkey;
+
+ALTER TABLE position_required_training 
+  ADD CONSTRAINT position_required_training_training_master_id_fkey 
+  FOREIGN KEY (training_master_id) 
+  REFERENCES training_types(id);
+
+-- Opcija 2: Dodaj novu kolonu training_type_id
+ALTER TABLE position_required_training 
+  ADD COLUMN training_type_id uuid REFERENCES training_types(id);
+
+
+
+ALTER TABLE public.training_certificate_records 
+ADD COLUMN issued_by character varying;
+
+
+
+  ***NOVA KOMPLET***
+  -- Training Management Database Schema
+-- Complete script with all tables and dependencies including modifications for position_required_training
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================================================
+-- LEVEL 1: Base tables (no foreign key dependencies)
+-- ============================================================================
+
+-- Training certificate types (base reference table)
+CREATE TABLE public.training_certificate_types (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  code character varying NOT NULL UNIQUE,
+  name character varying NOT NULL,
+  description text,
+  category character varying,
+  validity_period_months integer,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificate_types_pkey PRIMARY KEY (id)
+);
+
+-- Training types (base reference table)
+CREATE TABLE public.training_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code character varying NOT NULL UNIQUE,
+  name character varying NOT NULL,
+  description text,
+  training_type character varying CHECK (training_type::text = ANY (ARRAY['initial'::character varying, 'recurrent'::character varying, 're_qualification'::character varying, 'update'::character varying, 'ojt'::character varying, 'refresher'::character varying, 'conversion'::character varying]::text[])),
+  category character varying CHECK (category::text = ANY (ARRAY['safety'::character varying, 'technical'::character varying, 'operational'::character varying, 'administrative'::character varying, 'customer_service'::character varying, 'management'::character varying]::text[])),
+  hours_initial_theory numeric,
+  hours_initial_practical numeric,
+  hours_initial_ojt numeric,
+  hours_initial_total numeric,
+  hours_recurrent_theory numeric,
+  hours_recurrent_practical numeric,
+  hours_recurrent_ojt numeric,
+  hours_recurrent_total numeric,
+  hours_re_qualification_theory numeric,
+  hours_re_qualification_practical numeric,
+  hours_re_qualification_ojt numeric,
+  hours_re_qualification_total numeric,
+  hours_update_theory numeric,
+  hours_update_practical numeric,
+  hours_update_ojt numeric,
+  hours_update_total numeric,
+  hours_ojt_theory numeric,
+  hours_ojt_practical numeric,
+  hours_ojt_total numeric,
+  validity_period_months numeric,
+  renewal_notice_days integer,
+  is_mandatory boolean DEFAULT true,
+  difficulty_level character varying CHECK (difficulty_level::text = ANY (ARRAY['basic'::character varying, 'intermediate'::character varying, 'advanced'::character varying, 'expert'::character varying]::text[])),
+  reference_standard character varying,
+  passing_score integer CHECK (passing_score >= 0 AND passing_score <= 100),
+  requires_practical boolean DEFAULT false,
+  requires_written_exam boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_types_pkey PRIMARY KEY (id)
+);
+
+-- Working positions (base reference table)
+CREATE TABLE public.working_positions (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  department character varying,
+  description text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT working_positions_pkey PRIMARY KEY (id)
+);
+
+-- ============================================================================
+-- LEVEL 2: Tables with single-level dependencies
+-- ============================================================================
+
+-- Training certificates master (depends on training_certificate_types)
+CREATE TABLE public.training_certificates_master (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  type_id uuid,
+  code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  description text,
+  training_provider character varying,
+  duration_hours numeric,
+  validity_months integer,
+  renewal_before_days integer DEFAULT 30,
+  is_mandatory boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificates_master_pkey PRIMARY KEY (id),
+  CONSTRAINT training_certificates_master_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.training_certificate_types(id)
+);
+
+-- Staff (depends on working_positions)
+CREATE TABLE public.staff (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  employee_number character varying NOT NULL UNIQUE,
+  first_name character varying NOT NULL,
+  last_name character varying NOT NULL,
+  email character varying UNIQUE,
+  phone character varying,
+  position_id uuid,
+  staff_type character varying DEFAULT 'employee'::character varying,
+  status character varying DEFAULT 'active'::character varying,
+  hire_date date,
+  termination_date date,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT staff_pkey PRIMARY KEY (id),
+  CONSTRAINT staff_position_id_fkey FOREIGN KEY (position_id) REFERENCES public.working_positions(id)
+);
+
+-- Trainings (depends on training_types)
+CREATE TABLE public.trainings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  training_type_id uuid,
+  title character varying NOT NULL,
+  description text,
+  instructor character varying,
+  location character varying,
+  start_date timestamp with time zone NOT NULL,
+  end_date timestamp with time zone NOT NULL,
+  capacity integer,
+  status character varying DEFAULT 'scheduled'::character varying,
+  training_hours_theory numeric,
+  training_hours_practical numeric,
+  training_hours_ojt numeric,
+  training_hours_total numeric,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT trainings_pkey PRIMARY KEY (id),
+  CONSTRAINT trainings_training_type_id_fkey FOREIGN KEY (training_type_id) REFERENCES public.training_types(id)
+);
+
+-- ============================================================================
+-- LEVEL 3: Tables with dependencies on Level 2 tables
+-- ============================================================================
+
+-- Instructors (depends on staff)
+CREATE TABLE public.instructors (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  instructor_code character varying UNIQUE,
+  specializations text[],
+  certification_number character varying,
+  certification_expiry date,
+  status character varying DEFAULT 'active'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT instructors_pkey PRIMARY KEY (id),
+  CONSTRAINT instructors_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id)
+);
+
+-- Courses (depends on training_certificates_master)
+CREATE TABLE public.courses (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_code character varying NOT NULL UNIQUE,
+  title character varying NOT NULL,
+  description text,
+  course_type character varying NOT NULL,
+  training_master_id uuid,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  location character varying,
+  max_attendees integer,
+  cost numeric,
+  currency character varying DEFAULT 'EUR'::character varying,
+  status character varying DEFAULT 'planned'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT courses_pkey PRIMARY KEY (id),
+  CONSTRAINT courses_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id)
+);
+
+-- Position required training (MODIFIED - now depends on working_positions and training_types)
+CREATE TABLE public.position_required_training (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  position_id uuid,
+  training_master_id uuid, -- OVO SADA REFERENCIRA training_types (nakon promjene)
+  training_type_id uuid, -- DODATA NOVA KOLONA (Opcija 2)
+  is_mandatory boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT position_required_training_pkey PRIMARY KEY (id),
+  CONSTRAINT position_required_training_position_id_fkey FOREIGN KEY (position_id) REFERENCES public.working_positions(id),
+  -- Promijenjena foreign key da pokazuje na training_types umjesto training_certificates_master
+  CONSTRAINT position_required_training_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_types(id),
+  -- Dodata foreign key za novu kolonu training_type_id
+  CONSTRAINT position_required_training_training_type_id_fkey FOREIGN KEY (training_type_id) REFERENCES public.training_types(id)
+);
+
+-- Training certificate records (depends on staff and training_certificates_master)
+CREATE TABLE public.training_certificate_records (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  training_master_id uuid,
+  certificate_number character varying,
+  issue_date date NOT NULL,
+  expiry_date date,
+  completion_date date,
+  grade character varying,
+  notes text,
+  training_provider character varying,
+  instructor_name character varying,
+  status character varying DEFAULT 'valid'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_certificate_records_pkey PRIMARY KEY (id),
+  CONSTRAINT training_certificate_records_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id),
+  CONSTRAINT training_certificate_records_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id)
+);
+
+-- Training alerts (depends on staff and training_certificates_master)
+CREATE TABLE public.training_alerts (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  staff_id uuid,
+  training_master_id uuid,
+  alert_type character varying NOT NULL,
+  alert_date date NOT NULL,
+  expiry_date date,
+  days_until_expiry integer,
+  is_acknowledged boolean DEFAULT false,
+  acknowledged_at timestamp with time zone,
+  acknowledged_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT training_alerts_pkey PRIMARY KEY (id),
+  CONSTRAINT training_alerts_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id),
+  CONSTRAINT training_alerts_training_master_id_fkey FOREIGN KEY (training_master_id) REFERENCES public.training_certificates_master(id),
+  CONSTRAINT training_alerts_acknowledged_by_fkey FOREIGN KEY (acknowledged_by) REFERENCES public.staff(id)
+);
+
+-- ============================================================================
+-- LEVEL 4: Tables with dependencies on Level 3 tables
+-- ============================================================================
+
+-- Course instructors (depends on courses and instructors)
+CREATE TABLE public.course_instructors (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_id uuid,
+  instructor_id uuid,
+  role character varying DEFAULT 'primary'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT course_instructors_pkey PRIMARY KEY (id),
+  CONSTRAINT course_instructors_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id),
+  CONSTRAINT course_instructors_instructor_id_fkey FOREIGN KEY (instructor_id) REFERENCES public.instructors(id)
+);
+
+-- Course attendees (depends on courses and staff)
+CREATE TABLE public.course_attendees (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  course_id uuid,
+  staff_id uuid,
+  enrollment_date timestamp with time zone DEFAULT now(),
+  attendance_status character varying DEFAULT 'enrolled'::character varying,
+  completion_status character varying,
+  grade character varying,
+  certificate_issued boolean DEFAULT false,
+  certificate_number character varying,
+  certificate_issue_date date,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT course_attendees_pkey PRIMARY KEY (id),
+  CONSTRAINT course_attendees_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id),
+  CONSTRAINT course_attendees_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id)
+);
+
+-- ============================================================================
+-- Indexes for better performance (optional but recommended)
+-- ============================================================================
+
+-- Indexes on foreign keys
+CREATE INDEX idx_staff_position_id ON public.staff(position_id);
+CREATE INDEX idx_instructors_staff_id ON public.instructors(staff_id);
+CREATE INDEX idx_courses_training_master_id ON public.courses(training_master_id);
+CREATE INDEX idx_course_attendees_course_id ON public.course_attendees(course_id);
+CREATE INDEX idx_course_attendees_staff_id ON public.course_attendees(staff_id);
+CREATE INDEX idx_course_instructors_course_id ON public.course_instructors(course_id);
+CREATE INDEX idx_course_instructors_instructor_id ON public.course_instructors(instructor_id);
+CREATE INDEX idx_training_alerts_staff_id ON public.training_alerts(staff_id);
+CREATE INDEX idx_training_certificate_records_staff_id ON public.training_certificate_records(staff_id);
+CREATE INDEX idx_position_required_training_position_id ON public.position_required_training(position_id);
+CREATE INDEX idx_position_required_training_training_master_id ON public.position_required_training(training_master_id);
+CREATE INDEX idx_position_required_training_training_type_id ON public.position_required_training(training_type_id);
+
+-- Indexes on commonly queried fields
+CREATE INDEX idx_staff_status ON public.staff(status);
+CREATE INDEX idx_staff_employee_number ON public.staff(employee_number);
+CREATE INDEX idx_courses_status ON public.courses(status);
+CREATE INDEX idx_courses_start_date ON public.courses(start_date);
+CREATE INDEX idx_training_alerts_alert_date ON public.training_alerts(alert_date);
+CREATE INDEX idx_training_alerts_is_acknowledged ON public.training_alerts(is_acknowledged);
+
+-- ============================================================================
+-- Comments (optional - for documentation)
+-- ============================================================================
+
+COMMENT ON TABLE public.training_certificate_types IS 'Master list of training certificate type categories';
+COMMENT ON TABLE public.training_types IS 'Defines different types of training programs with their requirements';
+COMMENT ON TABLE public.working_positions IS 'Job positions within the organization';
+COMMENT ON TABLE public.staff IS 'Employee and staff member records';
+COMMENT ON TABLE public.instructors IS 'Certified instructors who can deliver training';
+COMMENT ON TABLE public.courses IS 'Scheduled training courses and sessions';
+COMMENT ON TABLE public.training_certificates_master IS 'Master catalog of available training certificates';
+COMMENT ON TABLE public.course_attendees IS 'Staff members enrolled in or attending courses';
+COMMENT ON TABLE public.training_certificate_records IS 'Individual training certificates issued to staff';
+COMMENT ON TABLE public.training_alerts IS 'Notifications for expiring or required training';
+COMMENT ON TABLE public.position_required_training IS 'Training requirements for specific job positions (modified to reference training_types)';
+
+-- ============================================================================
+-- Optional: Create a view for position training requirements with details
+-- ============================================================================
+
+CREATE OR REPLACE VIEW public.position_training_requirements_view AS
+SELECT 
+  prt.id,
+  prt.position_id,
+  wp.title AS position_title,
+  wp.department AS position_department,
+  prt.training_master_id AS training_type_id,
+  tt.code AS training_type_code,
+  tt.name AS training_type_name,
+  tt.category AS training_category,
+  tt.training_type AS training_subtype,
+  tt.validity_period_months,
+  tt.is_mandatory AS training_type_mandatory,
+  prt.training_type_id AS alt_training_type_id, -- alternative reference
+  prt.is_mandatory AS position_requirement_mandatory,
+  prt.created_at
+FROM public.position_required_training prt
+LEFT JOIN public.working_positions wp ON prt.position_id = wp.id
+LEFT JOIN public.training_types tt ON prt.training_master_id = tt.id
+WHERE wp.is_active = true AND tt.is_active = true;
+
+COMMENT ON VIEW public.position_training_requirements_view IS 'View showing training requirements for each position with training type details';

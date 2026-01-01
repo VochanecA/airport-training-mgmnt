@@ -55,6 +55,8 @@ interface TrainingType {
   is_active: boolean
 }
 
+
+
 export default function PositionsPage() {
   const router = useRouter()
   const supabase = getSupabaseBrowserClient()

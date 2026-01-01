@@ -16,13 +16,71 @@ import {
   Clock,
   AlertTriangle,
   CheckCircle,
-  Plus
+  Plus,
+  Trash2,
+  Eye,
+  Edit
 } from "lucide-react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import DeleteTrainingButton from "@/components/DeleteTrainingButton"
+import { Suspense } from "react"
 
-async function getEmployeeDetails(id: string) {
+// Type definitions
+interface WorkingPosition {
+  title: string
+  code: string
+  department: string
+}
+
+interface TrainingCertificateMaster {
+  title: string
+  code: string
+  validity_months?: number
+}
+
+interface TrainingCertificateRecord {
+  id: string
+  staff_id: string
+  training_master_id: string
+  certificate_number?: string
+  issue_date: string
+  expiry_date?: string
+  completion_date?: string
+  grade?: string
+  notes?: string
+  training_provider?: string
+  instructor_name?: string
+  status: string
+  training_certificates_master?: TrainingCertificateMaster
+}
+
+interface StaffMember {
+  id: string
+  employee_number: string
+  first_name: string
+  last_name: string
+  email?: string
+  phone?: string
+  position_id?: string
+  department?: string
+  staff_type: string
+  status: string
+  hire_date?: string
+  termination_date?: string
+  created_at: string
+  updated_at: string
+  working_positions?: WorkingPosition[]
+}
+
+interface EmployeeData {
+  employee: StaffMember
+  certificates: TrainingCertificateRecord[]
+  staffTrainings: TrainingCertificateRecord[]
+}
+
+async function getEmployeeDetails(id: string): Promise<EmployeeData | null> {
   const supabase = await getSupabaseServerClient()
 
   // Get employee details from STAFF table
@@ -54,7 +112,7 @@ async function getEmployeeDetails(id: string) {
     .eq("staff_id", id)
     .order("issue_date", { ascending: false })
 
-  // Get NEW staff trainings (from training_certificate_records)
+  // Get staff trainings (from training_certificate_records)
   const { data: staffTrainings } = await supabase
     .from("training_certificate_records")
     .select(`
@@ -76,7 +134,7 @@ async function getEmployeeDetails(id: string) {
 }
 
 // Helper function to calculate days remaining
-function getDaysRemaining(expiryDate: string) {
+function getDaysRemaining(expiryDate: string): number {
   const today = new Date()
   const expiry = new Date(expiryDate)
   const diff = expiry.getTime() - today.getTime()
@@ -118,7 +176,11 @@ function getTrainingStatusBadge(status: string, expiryDate: string) {
   }
 }
 
-export default async function EmployeeDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EmployeeDetailsPage({ 
+  params 
+}: { 
+  params: Promise<{ id: string }> 
+}) {
   const { id } = await params
   const data = await getEmployeeDetails(id)
 
@@ -129,21 +191,21 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
   const { employee, certificates, staffTrainings } = data
 
   // Calculate statistics
-  const validTrainings = staffTrainings.filter((t: any) => {
-    if (!t.expiry_date) return false
-    const days = getDaysRemaining(t.expiry_date)
+  const validTrainings = staffTrainings.filter((training) => {
+    if (!training.expiry_date) return false
+    const days = getDaysRemaining(training.expiry_date)
     return days > 0
   }).length
 
-  const expiringSoonTrainings = staffTrainings.filter((t: any) => {
-    if (!t.expiry_date) return false
-    const days = getDaysRemaining(t.expiry_date)
+  const expiringSoonTrainings = staffTrainings.filter((training) => {
+    if (!training.expiry_date) return false
+    const days = getDaysRemaining(training.expiry_date)
     return days > 0 && days <= 30
   }).length
 
-  const expiredTrainings = staffTrainings.filter((t: any) => {
-    if (!t.expiry_date) return false
-    const days = getDaysRemaining(t.expiry_date)
+  const expiredTrainings = staffTrainings.filter((training) => {
+    if (!training.expiry_date) return false
+    const days = getDaysRemaining(training.expiry_date)
     return days < 0
   }).length
 
@@ -339,14 +401,14 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                     <TableHead>Datum Isteka</TableHead>
                     <TableHead>Preostalo Dana</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Napomene</TableHead>
+                    <TableHead className="text-right">Akcije</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {staffTrainings.map((training: any) => {
+                  {staffTrainings.map((training) => {
                     const daysRemaining = training.expiry_date ? getDaysRemaining(training.expiry_date) : null
-                    const isExpiringSoon = daysRemaining && daysRemaining <= 30
-                    const isExpired = daysRemaining && daysRemaining < 0
+                    const isExpiringSoon = daysRemaining !== null && daysRemaining <= 30
+                    const isExpired = daysRemaining !== null && daysRemaining < 0
                     
                     return (
                       <TableRow 
@@ -396,10 +458,20 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                             <Badge variant="secondary">Bez isteka</Badge>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <span className="text-sm text-muted-foreground">
-                            {training.notes || "Nema napomena"}
-                          </span>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Suspense fallback={
+                              <Button size="sm" variant="outline" disabled>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            }>
+                              <DeleteTrainingButton 
+                                trainingId={training.id} 
+                                employeeId={id}
+                                trainingName={training.training_certificates_master?.title || "Nepoznata obuka"}
+                              />
+                            </Suspense>
+                          </div>
                         </TableCell>
                       </TableRow>
                     )
@@ -427,10 +499,11 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                     <TableHead>Datum Izdavanja</TableHead>
                     <TableHead>Datum Isteka</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Akcije</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {certificates.map((certificate: any) => (
+                  {certificates.map((certificate) => (
                     <TableRow key={certificate.id}>
                       <TableCell className="font-medium">{certificate.certificate_number || "N/A"}</TableCell>
                       <TableCell>{certificate.training_certificates_master?.title || "N/A"}</TableCell>
@@ -460,6 +533,22 @@ export default async function EmployeeDetailsPage({ params }: { params: Promise<
                               ? "Istekao"
                               : "Opozvan"}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Suspense fallback={
+                            <Button size="sm" variant="outline" disabled>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          }>
+                            <DeleteTrainingButton 
+                              trainingId={certificate.id} 
+                              employeeId={id}
+                              trainingName={certificate.training_certificates_master?.title || "Nepoznati sertifikat"}
+                              isCertificate={true}
+                            />
+                          </Suspense>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
