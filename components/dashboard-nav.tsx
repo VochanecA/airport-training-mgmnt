@@ -5,12 +5,26 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth-provider"
-import { GraduationCap, Users, Briefcase, Award, Clock, Calendar, BarChart3, LogOut, Menu, Layers, UserCircle } from "lucide-react"
+import { GraduationCap, Users, Briefcase, Award, Clock, Calendar, AlertCircle,BarChart3, LogOut, Menu, Layers, UserCircle } from "lucide-react"
 import { useState } from "react"
 import { Sheet, SheetContent, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { Separator } from "@/components/ui/separator"
 
-const navigation = [
+// TypeScript tipovi za navigation
+import type { LucideIcon } from "lucide-react"
+import type { ComponentProps } from "react"
+
+type NavigationItem = 
+  | {
+      name: string
+      href: string
+      icon: LucideIcon
+      color?: 'orange'
+    }
+  | { separator: true }
+
+const navigation: NavigationItem[] = [
   { name: "Pregled", href: "/dashboard", icon: BarChart3 },
   { name: "Tipovi Obuka", href: "/dashboard/training-types", icon: Layers },
   { name: "Predavanja i Obuke", href: "/dashboard/trainings", icon: GraduationCap },
@@ -20,6 +34,9 @@ const navigation = [
   { name: "Sertifikati", href: "/dashboard/certificates", icon: Award },
   { name: "Istek Obuka", href: "/dashboard/training-expiry", icon: Clock },
   { name: "Raspored", href: "/dashboard/schedule", icon: Calendar },
+  { name: "Istek Potvrda i Obuka", href: "/dashboard/schedule/expiries", icon: AlertCircle }, 
+  { separator: true },  
+  { name: "Plana Rada", href: "/dashboard/work-schedule", icon: Calendar, color: 'orange' },
 ]
 
 export function DashboardNav() {
@@ -31,16 +48,11 @@ export function DashboardNav() {
     e.preventDefault()
     e.stopPropagation()
     
-    // Prevent multiple clicks
     if (isSigningOut) return
     
-    // Close mobile menu if open
     setOpen(false)
-    
-    // Call signOut (this will redirect to /login immediately)
     await signOut()
     
-    // Fallback: if still on dashboard after 1 second, force redirect
     setTimeout(() => {
       if (window.location.pathname.startsWith('/dashboard')) {
         window.location.href = '/'
@@ -62,42 +74,50 @@ export function DashboardNav() {
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navigation.map((item) => {
-          const Icon = item.icon
-          const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href))
+        {navigation.map((item, index) => {
+          // Separator
+          if ('separator' in item && item.separator) {
+            return <Separator key={`sep-${index}`} className="my-2 shrink-0 bg-border" />
+          }
+          
+          // Link item
+          const typedItem = item as NavigationItem & { name: string; href: string; icon: LucideIcon; color?: 'orange' }
+          const Icon = typedItem.icon
+          const isActive = pathname === typedItem.href || (typedItem.href !== "/dashboard" && pathname.startsWith(typedItem.href))
+          
           return (
             <Link
-              key={item.name}
-              href={item.href}
+              key={typedItem.name}
+              href={typedItem.href}
               onClick={() => setOpen(false)}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                typedItem.color === 'orange' && !isActive
+                  ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50"
+                  : ""
               )}
             >
               <Icon className="h-5 w-5" />
-              {item.name}
+              {typedItem.name}
             </Link>
           )
         })}
       </nav>
 
       <div className="border-t p-4 space-y-3">
-        {/* User Info */}
         <div className="px-3 text-sm">
           <p className="font-medium truncate">{user?.email}</p>
           <p className="text-xs text-muted-foreground">{user?.role || "Korisnik"}</p>
         </div>
 
-        {/* Theme Toggle - Desktop i Mobile */}
         <div className="flex items-center justify-between px-3 py-2">
           <span className="text-sm font-medium">Izgled</span>
           <ThemeToggle />
         </div>
 
-        {/* Logout Button */}
         <Button 
           variant="ghost" 
           className="w-full justify-start gap-2 hover:bg-destructive/10 hover:text-destructive transition-colors" 

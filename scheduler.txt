@@ -1,0 +1,1451 @@
+-- ============================================================================
+-- AUTOMATSKO GENERISANJE RASPOREDA OBIUKA
+-- ============================================================================
+
+-- Tabela za generisane obuke iz rasporeda
+CREATE TABLE IF NOT EXISTS public.schedule_generated_trainings (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  
+  -- Osnovne informacije o treningu
+  title character varying NOT NULL,
+  description text,
+  
+  -- Tip treninga
+  training_type_id uuid NOT NULL,
+  
+  -- Period obuke
+  start_date timestamp with time zone NOT NULL,
+  end_date timestamp with time zone NOT NULL,
+  duration_hours numeric NOT NULL,
+  
+  -- Lokacija i kapacitet
+  location character varying NOT NULL,
+  airport character varying NOT NULL,
+  capacity integer NOT NULL CHECK (capacity > 0 AND capacity <= 22),
+  current_enrollment integer DEFAULT 0,
+  
+  -- Status
+  status character varying DEFAULT 'scheduled' CHECK (status IN (
+    'scheduled', 'in_progress', 'completed', 'cancelled'
+  )),
+  
+  -- Veza sa originalnim trening zapisima koji su generisali ovaj trening
+  source_training_records uuid[],
+  expiry_period_start date,
+  expiry_period_end date,
+  
+  -- Administrator koji je kreirao/kontroliše
+  created_by uuid,
+  approved_by uuid,
+  approved_at timestamp with time zone,
+  
+  -- Metapodaci
+  is_auto_generated boolean DEFAULT true,
+  generation_reason character varying,
+  notes text,
+  
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  
+  CONSTRAINT schedule_generated_trainings_pkey PRIMARY KEY (id),
+  
+  -- Foreign keys
+  CONSTRAINT schedule_generated_trainings_training_type_id_fkey 
+    FOREIGN KEY (training_type_id) 
+    REFERENCES public.training_types(id),
+    
+  CONSTRAINT schedule_generated_trainings_created_by_fkey 
+    FOREIGN KEY (created_by) 
+    REFERENCES public.staff(id),
+    
+  CONSTRAINT schedule_generated_trainings_approved_by_fkey 
+    FOREIGN KEY (approved_by) 
+    REFERENCES public.staff(id),
+  
+  -- Data validation
+  CONSTRAINT schedule_generated_trainings_valid_dates CHECK (
+    end_date > start_date
+  ),
+  CONSTRAINT schedule_generated_trainings_valid_capacity CHECK (
+    current_enrollment <= capacity
+  )
+);
+
+COMMENT ON TABLE public.schedule_generated_trainings IS 'Automatski generisane obuke na osnovu isteka validnosti';
+
+-- ============================================================================
+-- Tabela za podešavanja automatskog rasporeda
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.schedule_settings (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  
+  -- Podešavanje perioda
+  days_before_expiry_to_schedule integer NOT NULL DEFAULT 30,
+  expiry_lookahead_days integer NOT NULL DEFAULT 90,
+  default_capacity integer NOT NULL DEFAULT 15 CHECK (default_capacity > 0 AND default_capacity <= 22),
+  
+  -- Default lokacije
+  default_location character varying NOT NULL DEFAULT 'Sala za obuke',
+  default_airport character varying NOT NULL DEFAULT 'Glavni aerodrom',
+  
+  -- Vremenska podešavanja
+  default_start_hour time NOT NULL DEFAULT '09:00'::time,
+  default_end_hour time NOT NULL DEFAULT '17:00'::time,
+  
+  -- Administrator podešavanja
+  updated_by uuid,
+  
+  -- Metapodaci
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  
+  CONSTRAINT schedule_settings_pkey PRIMARY KEY (id),
+  
+  CONSTRAINT schedule_settings_updated_by_fkey 
+    FOREIGN KEY (updated_by) 
+    REFERENCES public.staff(id)
+);
+
+COMMENT ON TABLE public.schedule_settings IS 'Podešavanja za automatsko generisanje rasporeda';
+
+-- Insert default settings
+INSERT INTO public.schedule_settings (
+  id,
+  days_before_expiry_to_schedule,
+  expiry_lookahead_days,
+  default_capacity,
+  default_location,
+  default_airport,
+  default_start_hour,
+  default_end_hour
+) VALUES (
+  gen_random_uuid(),
+  30,
+  90,
+  15,
+  'Sala za obuke - Terminal A',
+  'Podgorica Aerodrom',
+  '09:00',
+  '17:00'
+) ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- Tabela za zaposlene dodeljene generisanim obukama
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.schedule_assignments (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  
+  generated_training_id uuid NOT NULL,
+  staff_id uuid NOT NULL,
+  training_record_id uuid NOT NULL,
+  
+  -- Status polaznika
+  assignment_status character varying DEFAULT 'assigned' CHECK (assignment_status IN (
+    'assigned', 'confirmed', 'attended', 'absent', 'cancelled'
+  )),
+  
+  -- Informacije o isteku
+  original_expiry_date date NOT NULL,
+  
+  -- Notifikacije
+  notified_at timestamp with time zone,
+  reminder_sent boolean DEFAULT false,
+  
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  
+  CONSTRAINT schedule_assignments_pkey PRIMARY KEY (id),
+  
+  -- Foreign keys
+  CONSTRAINT schedule_assignments_generated_training_id_fkey 
+    FOREIGN KEY (generated_training_id) 
+    REFERENCES public.schedule_generated_trainings(id) ON DELETE CASCADE,
+    
+  CONSTRAINT schedule_assignments_staff_id_fkey 
+    FOREIGN KEY (staff_id) 
+    REFERENCES public.staff(id),
+    
+  CONSTRAINT schedule_assignments_training_record_id_fkey 
+    FOREIGN KEY (training_record_id) 
+    REFERENCES public.training_records(id),
+  
+  -- Unique constraint - jedan zaposleni može biti dodeljen samo jednom put za isti trening
+  CONSTRAINT schedule_assignments_unique_assignment 
+    UNIQUE (generated_training_id, staff_id, training_record_id)
+);
+
+COMMENT ON TABLE public.schedule_assignments IS 'Dodele zaposlenih automatski generisanim obukama';
+
+-- ============================================================================
+-- VIEW za pregled isteka validnosti
+-- ============================================================================
+
+CREATE OR REPLACE VIEW public.expiring_trainings_view AS
+SELECT 
+  tr.id as training_record_id,
+  tr.staff_id,
+  tr.training_title,
+  tr.training_type_id,
+  tr.expiry_date,
+  tr.status as training_status,
+  
+  -- Zaposleni info
+  s.employee_number,
+  s.first_name,
+  s.last_name,
+  s.email,
+  s.position_id,
+  
+  -- Tip obuke info
+  tt.name as training_type_name,
+  tt.code as training_type_code,
+  tt.category as training_type_category,
+  tt.hours_recurrent_total as required_hours,
+  tt.validity_period_months,
+  
+  -- Pozicija info
+  wp.title as position_title,
+  wp.department,
+  
+  -- Izračun dana do isteka
+  CASE 
+    WHEN tr.expiry_date IS NOT NULL THEN 
+      tr.expiry_date - CURRENT_DATE
+    ELSE NULL
+  END as days_until_expiry,
+  
+  -- Period za planiranje (90 dana unapred)
+  CASE 
+    WHEN tr.expiry_date IS NOT NULL THEN 
+      tr.expiry_date - 90
+    ELSE NULL
+  END as planning_window_start,
+  
+  -- Preporučeni datum obuke (30 dana pre isteka)
+  CASE 
+    WHEN tr.expiry_date IS NOT NULL THEN 
+      tr.expiry_date - 30
+    ELSE NULL
+  END as recommended_training_date
+
+FROM public.training_records tr
+JOIN public.staff s ON tr.staff_id = s.id
+LEFT JOIN public.training_types tt ON tr.training_type_id = tt.id
+LEFT JOIN public.working_positions wp ON s.position_id = wp.id
+WHERE 
+  tr.status = 'completed'
+  AND tr.expiry_date IS NOT NULL
+  AND tr.expiry_date >= CURRENT_DATE
+  AND s.status = 'active'
+ORDER BY tr.expiry_date;
+
+COMMENT ON VIEW public.expiring_trainings_view IS 'Pregled treninga čija validnost ističe u narednom periodu';
+
+-- ============================================================================
+-- Funkcija za automatsko generisanje rasporeda
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.generate_schedule_from_expiries(
+  p_start_date date DEFAULT NULL,
+  p_end_date date DEFAULT NULL,
+  p_days_before integer DEFAULT 30,
+  p_capacity integer DEFAULT 15,
+  p_location character varying DEFAULT NULL,
+  p_airport character varying DEFAULT NULL,
+  p_user_id uuid DEFAULT NULL
+)
+RETURNS TABLE(
+  generated_count integer,
+  assigned_count integer,
+  message text
+) 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_settings record;
+  v_start_date date;
+  v_end_date date;
+  v_training_type_id uuid;
+  v_training_type record;
+  v_expiring_trainings record;
+  v_group_count integer := 0;
+  v_current_group uuid;
+  v_group_capacity integer;
+  v_group_members uuid[];
+  v_training_records uuid[];
+  v_start_time timestamp;
+  v_end_time timestamp;
+  v_duration_hours numeric;
+  v_training_date date;
+  v_generated_id uuid;
+BEGIN
+  -- Dohvati podešavanja
+  SELECT * INTO v_settings FROM public.schedule_settings LIMIT 1;
+  IF v_settings IS NULL THEN
+    RAISE EXCEPTION 'Schedule settings not found';
+  END IF;
+
+  -- Koristi podešavanja ako nisu prosleđeni parametri
+  IF p_days_before IS NULL THEN
+    p_days_before := v_settings.days_before_expiry_to_schedule;
+  END IF;
+  
+  IF p_capacity IS NULL THEN
+    p_capacity := v_settings.default_capacity;
+  END IF;
+  
+  IF p_location IS NULL THEN
+    p_location := v_settings.default_location;
+  END IF;
+  
+  IF p_airport IS NULL THEN
+    p_airport := v_settings.default_airport;
+  END IF;
+
+  -- Odredi period ako nije prosleđen
+  IF p_start_date IS NULL THEN
+    p_start_date := CURRENT_DATE;
+  END IF;
+  
+  IF p_end_date IS NULL THEN
+    p_end_date := p_start_date + v_settings.expiry_lookahead_days;
+  END IF;
+
+  -- Loguj početak
+  RAISE NOTICE 'Generating schedule from % to % (training % days before expiry)', 
+    p_start_date, p_end_date, p_days_before;
+
+  -- Resetuj brojače
+  generated_count := 0;
+  assigned_count := 0;
+
+  -- Prođi kroz sve tipove treninga koji imaju isteke u periodu
+  FOR v_training_type IN 
+    SELECT DISTINCT 
+      tt.id,
+      tt.name,
+      tt.code,
+      tt.hours_recurrent_total,
+      COUNT(et.training_record_id) as expiring_count
+    FROM public.expiring_trainings_view et
+    JOIN public.training_types tt ON et.training_type_id = tt.id
+    WHERE 
+      et.expiry_date BETWEEN p_start_date AND p_end_date
+      AND et.days_until_expiry >= p_days_before
+      AND tt.hours_recurrent_total > 0
+    GROUP BY tt.id, tt.name, tt.code, tt.hours_recurrent_total
+    HAVING COUNT(et.training_record_id) > 0
+    ORDER BY tt.name
+  LOOP
+    -- Resetuj grupu za svaki tip treninga
+    v_group_count := 0;
+    v_group_members := '{}';
+    v_training_records := '{}';
+    v_current_group := NULL;
+    
+    -- Dohvati sve koji ističu za ovaj tip treninga, sortirano po datumu isteka
+    FOR v_expiring_trainings IN
+      SELECT 
+        et.*,
+        et.recommended_training_date - p_days_before as suggested_training_date
+      FROM public.expiring_trainings_view et
+      WHERE 
+        et.training_type_id = v_training_type.id
+        AND et.expiry_date BETWEEN p_start_date AND p_end_date
+        AND et.days_until_expiry >= p_days_before
+      ORDER BY et.expiry_date, et.employee_number
+    LOOP
+      -- Ako nema aktivne grupe ili je grupa puna, kreiraj novu grupu
+      IF v_current_group IS NULL OR v_group_count >= p_capacity THEN
+        -- Ako postoji prethodna grupa, sačuvaj je
+        IF v_current_group IS NOT NULL AND array_length(v_group_members, 1) > 0 THEN
+          -- Osiguraj da svi u grupi imaju isti preporučeni datum (uzmi najraniji)
+          v_training_date := (
+            SELECT MIN(recommended_training_date - p_days_before)
+            FROM public.expiring_trainings_view
+            WHERE training_record_id = ANY(v_training_records)
+          );
+          
+          -- Izračunaj vreme trajanja
+          v_duration_hours := v_training_type.hours_recurrent_total;
+          v_start_time := (v_training_date || ' ' || v_settings.default_start_hour)::timestamp;
+          v_end_time := v_start_time + (v_duration_hours || ' hours')::interval;
+          
+          -- Kreiraj trening za grupu
+          INSERT INTO public.schedule_generated_trainings (
+            title,
+            description,
+            training_type_id,
+            start_date,
+            end_date,
+            duration_hours,
+            location,
+            airport,
+            capacity,
+            current_enrollment,
+            source_training_records,
+            expiry_period_start,
+            expiry_period_end,
+            created_by,
+            is_auto_generated,
+            generation_reason,
+            notes
+          ) VALUES (
+            'Recurrent: ' || v_training_type.name,
+            'Automatski generisana obuka za obnovu sertifikata. Istek validnosti između ' || 
+            (SELECT MIN(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)) || 
+            ' i ' || (SELECT MAX(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+            v_training_type.id,
+            v_start_time,
+            v_end_time,
+            v_duration_hours,
+            p_location,
+            p_airport,
+            p_capacity,
+            v_group_count,
+            v_training_records,
+            (SELECT MIN(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+            (SELECT MAX(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+            p_user_id,
+            true,
+            'auto_renewal_' || p_days_before || '_days_before',
+            'Generisano automatski ' || CURRENT_TIMESTAMP
+          ) RETURNING id INTO v_current_group;
+          
+          generated_count := generated_count + 1;
+          
+          -- Dodeli sve zaposlene ovoj grupi
+          FOR i IN 1..array_length(v_group_members, 1) LOOP
+            INSERT INTO public.schedule_assignments (
+              generated_training_id,
+              staff_id,
+              training_record_id,
+              original_expiry_date,
+              assignment_status
+            ) VALUES (
+              v_current_group,
+              v_group_members[i],
+              v_training_records[i],
+              (SELECT expiry_date FROM public.expiring_trainings_view WHERE training_record_id = v_training_records[i]),
+              'assigned'
+            );
+            
+            assigned_count := assigned_count + 1;
+          END LOOP;
+        END IF;
+        
+        -- Resetuj za novu grupu
+        v_group_count := 0;
+        v_group_members := '{}';
+        v_training_records := '{}';
+        v_current_group := NULL;
+      END IF;
+      
+      -- Dodaj zaposlenog u trenutnu grupu
+      v_group_count := v_group_count + 1;
+      v_group_members := array_append(v_group_members, v_expiring_trainings.staff_id);
+      v_training_records := array_append(v_training_records, v_expiring_trainings.training_record_id);
+    END LOOP;
+    
+    -- Obradi poslednju grupu za ovaj tip treninga
+    IF v_current_group IS NULL AND array_length(v_group_members, 1) > 0 THEN
+      -- Kreiraj grupu za preostale
+      v_training_date := (
+        SELECT MIN(recommended_training_date - p_days_before)
+        FROM public.expiring_trainings_view
+        WHERE training_record_id = ANY(v_training_records)
+      );
+      
+      v_duration_hours := v_training_type.hours_recurrent_total;
+      v_start_time := (v_training_date || ' ' || v_settings.default_start_hour)::timestamp;
+      v_end_time := v_start_time + (v_duration_hours || ' hours')::interval;
+      
+      INSERT INTO public.schedule_generated_trainings (
+        title,
+        description,
+        training_type_id,
+        start_date,
+        end_date,
+        duration_hours,
+        location,
+        airport,
+        capacity,
+        current_enrollment,
+        source_training_records,
+        expiry_period_start,
+        expiry_period_end,
+        created_by,
+        is_auto_generated,
+        generation_reason,
+        notes
+      ) VALUES (
+        'Recurrent: ' || v_training_type.name,
+        'Automatski generisana obuka za obnovu sertifikata. Istek validnosti između ' || 
+        (SELECT MIN(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)) || 
+        ' i ' || (SELECT MAX(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+        v_training_type.id,
+        v_start_time,
+        v_end_time,
+        v_duration_hours,
+        p_location,
+        p_airport,
+        p_capacity,
+        v_group_count,
+        v_training_records,
+        (SELECT MIN(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+        (SELECT MAX(expiry_date) FROM public.expiring_trainings_view WHERE training_record_id = ANY(v_training_records)),
+        p_user_id,
+        true,
+        'auto_renewal_' || p_days_before || '_days_before',
+        'Generisano automatski ' || CURRENT_TIMESTAMP
+      ) RETURNING id INTO v_current_group;
+      
+      generated_count := generated_count + 1;
+      
+      -- Dodeli zaposlene
+      FOR i IN 1..array_length(v_group_members, 1) LOOP
+        INSERT INTO public.schedule_assignments (
+          generated_training_id,
+          staff_id,
+          training_record_id,
+          original_expiry_date,
+          assignment_status
+        ) VALUES (
+          v_current_group,
+          v_group_members[i],
+          v_training_records[i],
+          (SELECT expiry_date FROM public.expiring_trainings_view WHERE training_record_id = v_training_records[i]),
+          'assigned'
+        );
+        
+        assigned_count := assigned_count + 1;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- Vrati rezultate
+  message := 'Successfully generated ' || generated_count || ' training sessions with ' || assigned_count || ' assignments';
+  
+  RETURN NEXT;
+  
+  RETURN;
+END;
+$$;
+
+COMMENT ON FUNCTION public.generate_schedule_from_expiries IS 'Generiše raspored obuka na osnovu isteka validnosti';
+
+-- ============================================================================
+-- Funkcija za manualno podešavanje kapaciteta
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.regenerate_schedule_with_capacity(
+  p_training_type_ids uuid[] DEFAULT NULL,
+  p_capacity integer DEFAULT 15,
+  p_user_id uuid DEFAULT NULL
+)
+RETURNS TABLE(
+  updated_count integer,
+  message text
+) 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_training record;
+  v_assignments record;
+  v_new_groups uuid[];
+  v_current_group uuid;
+  v_group_count integer;
+  v_group_members uuid[];
+  v_training_records uuid[];
+  v_settings record;
+BEGIN
+  -- Dohvati podešavanja
+  SELECT * INTO v_settings FROM public.schedule_settings LIMIT 1;
+  
+  updated_count := 0;
+  v_new_groups := '{}';
+
+  -- Prođi kroz sve automatski generisane treninge koji nisu započeti
+  FOR v_training IN
+    SELECT 
+      gt.*,
+      tt.hours_recurrent_total,
+      COUNT(sa.id) as current_assignments
+    FROM public.schedule_generated_trainings gt
+    JOIN public.training_types tt ON gt.training_type_id = tt.id
+    LEFT JOIN public.schedule_assignments sa ON gt.id = sa.generated_training_id
+    WHERE 
+      gt.is_auto_generated = true
+      AND gt.status = 'scheduled'
+      AND gt.start_date > CURRENT_DATE
+      AND (p_training_type_ids IS NULL OR gt.training_type_id = ANY(p_training_type_ids))
+    GROUP BY gt.id, tt.hours_recurrent_total
+    HAVING COUNT(sa.id) > p_capacity
+    ORDER BY gt.start_date
+  LOOP
+    -- Ako je broj dodeljenih veći od novog kapaciteta, podeli na više grupa
+    IF v_training.current_assignments > p_capacity THEN
+      -- Prvo obriši postojeće dodele
+      DELETE FROM public.schedule_assignments 
+      WHERE generated_training_id = v_training.id;
+      
+      -- Promeni status originalnog treninga
+      UPDATE public.schedule_generated_trainings 
+      SET 
+        status = 'cancelled',
+        notes = COALESCE(notes, '') || ' Otkazan zbog promene kapaciteta na ' || p_capacity || '.'
+      WHERE id = v_training.id;
+      
+      -- Dohvati sve dodele koje su bile za ovaj trening
+      v_group_count := 0;
+      v_current_group := NULL;
+      v_group_members := '{}';
+      v_training_records := '{}';
+      
+      FOR v_assignments IN
+        SELECT 
+          sa.staff_id,
+          sa.training_record_id,
+          sa.original_expiry_date,
+          tr.training_title,
+          s.first_name,
+          s.last_name
+        FROM public.schedule_assignments sa
+        JOIN public.training_records tr ON sa.training_record_id = tr.id
+        JOIN public.staff s ON sa.staff_id = s.id
+        WHERE sa.generated_training_id = v_training.id
+        ORDER BY sa.original_expiry_date, s.last_name
+      LOOP
+        -- Ako nema aktivne grupe ili je grupa puna, kreiraj novu grupu
+        IF v_current_group IS NULL OR v_group_count >= p_capacity THEN
+          -- Kreiraj novu grupu
+          INSERT INTO public.schedule_generated_trainings (
+            title,
+            description,
+            training_type_id,
+            start_date,
+            end_date,
+            duration_hours,
+            location,
+            airport,
+            capacity,
+            current_enrollment,
+            source_training_records,
+            expiry_period_start,
+            expiry_period_end,
+            created_by,
+            is_auto_generated,
+            generation_reason,
+            notes,
+            status
+          ) VALUES (
+            v_training.title,
+            v_training.description,
+            v_training.training_type_id,
+            v_training.start_date + (v_group_count * interval '1 week'),
+            v_training.end_date + (v_group_count * interval '1 week'),
+            v_training.duration_hours,
+            v_training.location,
+            v_training.airport,
+            p_capacity,
+            0,
+            '{}',
+            v_training.expiry_period_start,
+            v_training.expiry_period_end,
+            p_user_id,
+            true,
+            'regenerated_capacity_' || p_capacity,
+            'Regenerisano zbog promene kapaciteta. Originalni ID: ' || v_training.id,
+            'scheduled'
+          ) RETURNING id INTO v_current_group;
+          
+          v_new_groups := array_append(v_new_groups, v_current_group);
+          updated_count := updated_count + 1;
+          v_group_count := 0;
+          v_group_members := '{}';
+          v_training_records := '{}';
+        END IF;
+        
+        -- Dodaj u trenutnu grupu
+        v_group_count := v_group_count + 1;
+        v_group_members := array_append(v_group_members, v_assignments.staff_id);
+        v_training_records := array_append(v_training_records, v_assignments.training_record_id);
+        
+        -- Ažuriraj grupu sa novim članovima
+        UPDATE public.schedule_generated_trainings 
+        SET 
+          current_enrollment = v_group_count,
+          source_training_records = v_training_records
+        WHERE id = v_current_group;
+        
+        -- Kreiraj dodelu
+        INSERT INTO public.schedule_assignments (
+          generated_training_id,
+          staff_id,
+          training_record_id,
+          original_expiry_date,
+          assignment_status
+        ) VALUES (
+          v_current_group,
+          v_assignments.staff_id,
+          v_assignments.training_record_id,
+          v_assignments.original_expiry_date,
+          'assigned'
+        );
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- Vrati rezultate
+  IF updated_count > 0 THEN
+    message := 'Regenerated ' || updated_count || ' training groups with new capacity of ' || p_capacity;
+  ELSE
+    message := 'No training groups needed regeneration';
+  END IF;
+  
+  RETURN NEXT;
+  
+  RETURN;
+END;
+$$;
+
+COMMENT ON FUNCTION public.regenerate_schedule_with_capacity IS 'Regeneriše raspored sa novim kapacitetom grupe';
+
+-- ============================================================================
+-- Funkcija za pregled stanja isteka
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.get_expiry_summary(
+  p_days_threshold integer DEFAULT 90
+)
+RETURNS TABLE(
+  training_type_id uuid,
+  training_type_name character varying,
+  training_type_code character varying,
+  category character varying,
+  expiring_count bigint,
+  earliest_expiry date,
+  latest_expiry date,
+  recommended_sessions integer,
+  required_hours numeric
+) 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    tt.id as training_type_id,
+    tt.name as training_type_name,
+    tt.code as training_type_code,
+    tt.category,
+    COUNT(et.training_record_id) as expiring_count,
+    MIN(et.expiry_date) as earliest_expiry,
+    MAX(et.expiry_date) as latest_expiry,
+    CEIL(COUNT(et.training_record_id)::decimal / 15) as recommended_sessions,
+    tt.hours_recurrent_total as required_hours
+  FROM public.expiring_trainings_view et
+  JOIN public.training_types tt ON et.training_type_id = tt.id
+  WHERE et.days_until_expiry <= p_days_threshold
+    AND et.days_until_expiry > 0
+  GROUP BY tt.id, tt.name, tt.code, tt.category, tt.hours_recurrent_total
+  ORDER BY COUNT(et.training_record_id) DESC, tt.name;
+  
+  RETURN;
+END;
+$$;
+
+COMMENT ON FUNCTION public.get_expiry_summary IS 'Vraća sumarni pregled isteka validnosti po tipovima treninga';
+
+-- ============================================================================
+-- Triggers za automatsko ažuriranje vremena
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.update_schedule_timestamps()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Triggers za sve tabele
+DROP TRIGGER IF EXISTS trg_update_schedule_generated_trainings ON public.schedule_generated_trainings;
+CREATE TRIGGER trg_update_schedule_generated_trainings
+  BEFORE UPDATE ON public.schedule_generated_trainings
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_schedule_timestamps();
+
+DROP TRIGGER IF EXISTS trg_update_schedule_settings ON public.schedule_settings;
+CREATE TRIGGER trg_update_schedule_settings
+  BEFORE UPDATE ON public.schedule_settings
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_schedule_timestamps();
+
+DROP TRIGGER IF EXISTS trg_update_schedule_assignments ON public.schedule_assignments;
+CREATE TRIGGER trg_update_schedule_assignments
+  BEFORE UPDATE ON public.schedule_assignments
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_schedule_timestamps();
+
+-- ============================================================================
+-- Indexi za performanse
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_schedule_generated_trainings_type 
+  ON public.schedule_generated_trainings(training_type_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_generated_trainings_dates 
+  ON public.schedule_generated_trainings(start_date, end_date);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_generated_trainings_status 
+  ON public.schedule_generated_trainings(status);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_assignments_training 
+  ON public.schedule_assignments(generated_training_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_assignments_staff 
+  ON public.schedule_assignments(staff_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_assignments_status 
+  ON public.schedule_assignments(assignment_status);
+
+-- ============================================================================
+-- View za kombinovani raspored
+-- ============================================================================
+
+CREATE OR REPLACE VIEW public.combined_schedule_view AS
+-- Rucno kreirani treningi
+SELECT 
+  'manual' as source_type,
+  t.id,
+  t.title,
+  t.description,
+  t.start_date,
+  t.end_date,
+  t.location,
+  t.instructor,
+  t.capacity,
+  (SELECT COUNT(*) FROM public.course_attendees ca WHERE ca.course_id = c.id) as current_enrollment,
+  t.status,
+  tt.name as training_type_name,
+  tt.category as training_type_category,
+  NULL::uuid[] as source_training_records,
+  NULL::date as expiry_period_start,
+  NULL::date as expiry_period_end,
+  t.created_at,
+  t.updated_at
+FROM public.trainings t
+LEFT JOIN public.training_types tt ON t.training_type_id = tt.id
+LEFT JOIN public.courses c ON t.id = c.id
+
+UNION ALL
+
+-- Automatski generisani treningi
+SELECT 
+  'auto_generated' as source_type,
+  gt.id,
+  gt.title,
+  gt.description,
+  gt.start_date,
+  gt.end_date,
+  gt.location || ' - ' || gt.airport as location,
+  NULL as instructor,
+  gt.capacity,
+  gt.current_enrollment,
+  gt.status,
+  tt.name as training_type_name,
+  tt.category as training_type_category,
+  gt.source_training_records,
+  gt.expiry_period_start,
+  gt.expiry_period_end,
+  gt.created_at,
+  gt.updated_at
+FROM public.schedule_generated_trainings gt
+JOIN public.training_types tt ON gt.training_type_id = tt.id
+
+ORDER BY start_date;
+
+COMMENT ON VIEW public.combined_schedule_view IS 'Kombinovani pregled rucno i automatski generisanih treninga';
+
+-- ============================================================================
+-- SUCCESS MESSAGE
+-- ============================================================================
+
+DO $$ 
+BEGIN
+  RAISE NOTICE '============================================';
+  RAISE NOTICE 'AUTOMATIC SCHEDULE GENERATION IMPLEMENTED';
+  RAISE NOTICE '============================================';
+  RAISE NOTICE 'Created: schedule_generated_trainings table';
+  RAISE NOTICE 'Created: schedule_settings table';
+  RAISE NOTICE 'Created: schedule_assignments table';
+  RAISE NOTICE 'Created: expiring_trainings_view view';
+  RAISE NOTICE 'Created: combined_schedule_view view';
+  RAISE NOTICE 'Created: generate_schedule_from_expiries function';
+  RAISE NOTICE 'Created: regenerate_schedule_with_capacity function';
+  RAISE NOTICE 'Created: get_expiry_summary function';
+  RAISE NOTICE '============================================';
+END $$;
+
+
+-- ============================================================================
+-- VIEW za detaljan pregled isteka sertifikata sa informacijama o treningu
+-- ============================================================================
+
+CREATE OR REPLACE VIEW public.certificate_expiry_detailed_view AS
+SELECT 
+  cr.id as certificate_id,
+  cr.certificate_number,
+  cr.issue_date,
+  cr.expiry_date,
+  cr.status as certificate_status,
+  cr.grade,
+  cr.instructor_name,
+  cr.issued_by,
+  
+  -- Zaposleni info
+  s.id as staff_id,
+  s.employee_number,
+  s.first_name,
+  s.last_name,
+  s.email,
+  s.position_id,
+  
+  -- Trening info iz certificate master
+  tcm.id as training_master_id,
+  tcm.title as training_title,
+  tcm.code as training_code,
+  tcm.duration_hours,
+  tcm.validity_months,
+  
+  -- Tip treninga (preko training_types)
+  tt.id as training_type_id,
+  tt.name as training_type_name,
+  tt.code as training_type_code,
+  tt.category as training_type_category,
+  tt.hours_recurrent_total,
+  
+  -- Pozicija i odjel
+  wp.title as position_title,
+  wp.department,
+  
+  -- Izračun dana do isteka
+  CASE 
+    WHEN cr.expiry_date IS NOT NULL THEN 
+      cr.expiry_date - CURRENT_DATE
+    ELSE NULL
+  END as days_until_expiry,
+  
+  -- Period za planiranje (90 dana unapred)
+  CASE 
+    WHEN cr.expiry_date IS NOT NULL THEN 
+      cr.expiry_date - 90
+    ELSE NULL
+  END as planning_window_start,
+  
+  -- Preporučeni datum obuke (30 dana pre isteka)
+  CASE 
+    WHEN cr.expiry_date IS NOT NULL THEN 
+      cr.expiry_date - 30
+    ELSE NULL
+  END as recommended_training_date,
+  
+  -- Da li je već zakazan trening
+  EXISTS (
+    SELECT 1 FROM public.schedule_assignments sa
+    JOIN public.schedule_generated_trainings gt ON sa.generated_training_id = gt.id
+    WHERE sa.training_record_id = tr.id
+      AND gt.status = 'scheduled'
+  ) as has_scheduled_training
+
+FROM public.training_certificate_records cr
+JOIN public.staff s ON cr.staff_id = s.id
+LEFT JOIN public.training_certificates_master tcm ON cr.training_master_id = tcm.id
+LEFT JOIN public.training_records tr ON (
+  tr.staff_id = s.id 
+  AND tr.training_type_id IS NOT NULL
+  AND tr.expiry_date = cr.expiry_date
+)
+LEFT JOIN public.training_types tt ON tr.training_type_id = tt.id
+LEFT JOIN public.working_positions wp ON s.position_id = wp.id
+WHERE 
+  cr.status = 'valid'
+  AND cr.expiry_date IS NOT NULL
+  AND cr.expiry_date >= CURRENT_DATE
+  AND s.status = 'active'
+ORDER BY cr.expiry_date;
+
+COMMENT ON VIEW public.certificate_expiry_detailed_view IS 'Detaljan pregled isteka sertifikata sa svim informacijama';
+
+-- ============================================================================
+-- Funkcija za automatsko generisanje rasporeda na osnovu sertifikata
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.generate_schedule_from_certificates(
+  p_days_before integer DEFAULT 30,
+  p_capacity integer DEFAULT 15,
+  p_location character varying DEFAULT NULL,
+  p_airport character varying DEFAULT NULL,
+  p_user_id uuid DEFAULT NULL,
+  p_training_type_ids uuid[] DEFAULT NULL
+)
+RETURNS TABLE(
+  generated_count integer,
+  assigned_count integer,
+  message text
+) 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_settings record;
+  v_certificate record;
+  v_training_type_id uuid;
+  v_training_type record;
+  v_group_count integer := 0;
+  v_current_group uuid;
+  v_group_members uuid[];
+  v_certificate_ids uuid[];
+  v_start_time timestamp;
+  v_end_time timestamp;
+  v_duration_hours numeric;
+  v_training_date date;
+  v_generated_id uuid;
+BEGIN
+  -- Dohvati podešavanja
+  SELECT * INTO v_settings FROM public.schedule_settings LIMIT 1;
+  IF v_settings IS NULL THEN
+    RAISE EXCEPTION 'Schedule settings not found';
+  END IF;
+
+  -- Koristi podešavanja ako nisu prosleđeni parametri
+  IF p_location IS NULL THEN
+    p_location := v_settings.default_location;
+  END IF;
+  
+  IF p_airport IS NULL THEN
+    p_airport := v_settings.default_airport;
+  END IF;
+
+  -- Resetuj brojače
+  generated_count := 0;
+  assigned_count := 0;
+
+  -- Loguj početak
+  RAISE NOTICE 'Generating schedule from certificates (training % days before expiry)', p_days_before;
+
+  -- Prođi kroz sve tipove treninga koji imaju sertifikate koji ističu
+  FOR v_training_type IN 
+    SELECT DISTINCT 
+      tt.id,
+      tt.name,
+      tt.code,
+      tt.hours_recurrent_total,
+      COUNT(ced.certificate_id) as expiring_count
+    FROM public.certificate_expiry_detailed_view ced
+    JOIN public.training_types tt ON ced.training_type_id = tt.id
+    WHERE 
+      ced.days_until_expiry BETWEEN p_days_before AND 90
+      AND tt.hours_recurrent_total > 0
+      AND (p_training_type_ids IS NULL OR tt.id = ANY(p_training_type_ids))
+      AND ced.has_scheduled_training = false
+    GROUP BY tt.id, tt.name, tt.code, tt.hours_recurrent_total
+    HAVING COUNT(ced.certificate_id) > 0
+    ORDER BY tt.name
+  LOOP
+    -- Resetuj grupu za svaki tip treninga
+    v_group_count := 0;
+    v_group_members := '{}';
+    v_certificate_ids := '{}';
+    v_current_group := NULL;
+    
+    -- Dohvati sve sertifikate koji ističu za ovaj tip treninga
+    FOR v_certificate IN
+      SELECT *
+      FROM public.certificate_expiry_detailed_view ced
+      WHERE 
+        ced.training_type_id = v_training_type.id
+        AND ced.days_until_expiry BETWEEN p_days_before AND 90
+        AND ced.has_scheduled_training = false
+      ORDER BY ced.expiry_date, ced.employee_number
+    LOOP
+      -- Ako nema aktivne grupe ili je grupa puna, kreiraj novu grupu
+      IF v_current_group IS NULL OR v_group_count >= p_capacity THEN
+        -- Ako postoji prethodna grupa, sačuvaj je
+        IF v_current_group IS NOT NULL AND array_length(v_group_members, 1) > 0 THEN
+          -- Osiguraj da svi u grupi imaju isti preporučeni datum (uzmi najraniji)
+          v_training_date := (
+            SELECT MIN(recommended_training_date)
+            FROM public.certificate_expiry_detailed_view
+            WHERE certificate_id = ANY(v_certificate_ids)
+          );
+          
+          -- Izračunaj vreme trajanja
+          v_duration_hours := v_training_type.hours_recurrent_total;
+          v_start_time := (v_training_date || ' ' || v_settings.default_start_hour)::timestamp;
+          v_end_time := v_start_time + (v_duration_hours || ' hours')::interval;
+          
+          -- Kreiraj trening za grupu
+          INSERT INTO public.schedule_generated_trainings (
+            title,
+            description,
+            training_type_id,
+            start_date,
+            end_date,
+            duration_hours,
+            location,
+            airport,
+            capacity,
+            current_enrollment,
+            source_training_records,
+            expiry_period_start,
+            expiry_period_end,
+            created_by,
+            is_auto_generated,
+            generation_reason,
+            notes,
+            status
+          ) VALUES (
+            'Recurrent: ' || v_training_type.name,
+            'Automatski generisana obuka za obnovu sertifikata. Istek sertifikata između ' || 
+            (SELECT MIN(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)) || 
+            ' i ' || (SELECT MAX(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+            v_training_type.id,
+            v_start_time,
+            v_end_time,
+            v_duration_hours,
+            p_location,
+            p_airport,
+            p_capacity,
+            v_group_count,
+            '{}', -- Prazan array jer ovo dolazi iz sertifikata, ne trening zapisa
+            (SELECT MIN(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+            (SELECT MAX(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+            p_user_id,
+            true,
+            'certificate_renewal_' || p_days_before || '_days_before',
+            'Generisano automatski na osnovu sertifikata ' || CURRENT_TIMESTAMP,
+            'scheduled'
+          ) RETURNING id INTO v_current_group;
+          
+          generated_count := generated_count + 1;
+          
+          -- Dodeli sve zaposlene ovoj grupi (preko training records)
+          FOR i IN 1..array_length(v_group_members, 1) LOOP
+            -- Prvo pronađi ili kreiraj training record za ovaj sertifikat
+            DECLARE
+              v_training_record_id uuid;
+            BEGIN
+              -- Pokušaj pronaći postojeći training record
+              SELECT tr.id INTO v_training_record_id
+              FROM public.training_records tr
+              WHERE tr.staff_id = v_group_members[i]
+                AND tr.training_type_id = v_training_type.id
+                AND tr.expiry_date = (
+                  SELECT expiry_date 
+                  FROM public.certificate_expiry_detailed_view 
+                  WHERE certificate_id = v_certificate_ids[i]
+                )
+              LIMIT 1;
+              
+              -- Ako ne postoji, kreiraj novi
+              IF v_training_record_id IS NULL THEN
+                INSERT INTO public.training_records (
+                  staff_id,
+                  training_title,
+                  training_type_id,
+                  training_date,
+                  expiry_date,
+                  competency_achieved,
+                  status,
+                  training_hours_total,
+                  location,
+                  training_provider,
+                  created_by,
+                  created_at,
+                  updated_at
+                ) VALUES (
+                  v_group_members[i],
+                  v_training_type.name,
+                  v_training_type.id,
+                  (SELECT issue_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+                  (SELECT expiry_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+                  true,
+                  'completed',
+                  v_training_type.hours_recurrent_total,
+                  'Originalna lokacija',
+                  'Originalni organizator',
+                  p_user_id,
+                  NOW(),
+                  NOW()
+                ) RETURNING id INTO v_training_record_id;
+              END IF;
+              
+              -- Kreiraj dodelu
+              INSERT INTO public.schedule_assignments (
+                generated_training_id,
+                staff_id,
+                training_record_id,
+                original_expiry_date,
+                assignment_status,
+                created_at,
+                updated_at
+              ) VALUES (
+                v_current_group,
+                v_group_members[i],
+                v_training_record_id,
+                (SELECT expiry_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+                'assigned',
+                NOW(),
+                NOW()
+              );
+              
+              assigned_count := assigned_count + 1;
+            END;
+          END LOOP;
+        END IF;
+        
+        -- Resetuj za novu grupu
+        v_group_count := 0;
+        v_group_members := '{}';
+        v_certificate_ids := '{}';
+        v_current_group := NULL;
+      END IF;
+      
+      -- Dodaj zaposlenog u trenutnu grupu
+      v_group_count := v_group_count + 1;
+      v_group_members := array_append(v_group_members, v_certificate.staff_id);
+      v_certificate_ids := array_append(v_certificate_ids, v_certificate.certificate_id);
+    END LOOP;
+    
+    -- Obradi poslednju grupu za ovaj tip treninga
+    IF v_current_group IS NULL AND array_length(v_group_members, 1) > 0 THEN
+      -- Kreiraj grupu za preostale
+      v_training_date := (
+        SELECT MIN(recommended_training_date)
+        FROM public.certificate_expiry_detailed_view
+        WHERE certificate_id = ANY(v_certificate_ids)
+      );
+      
+      v_duration_hours := v_training_type.hours_recurrent_total;
+      v_start_time := (v_training_date || ' ' || v_settings.default_start_hour)::timestamp;
+      v_end_time := v_start_time + (v_duration_hours || ' hours')::interval;
+      
+      INSERT INTO public.schedule_generated_trainings (
+        title,
+        description,
+        training_type_id,
+        start_date,
+        end_date,
+        duration_hours,
+        location,
+        airport,
+        capacity,
+        current_enrollment,
+        source_training_records,
+        expiry_period_start,
+        expiry_period_end,
+        created_by,
+        is_auto_generated,
+        generation_reason,
+        notes,
+        status
+      ) VALUES (
+        'Recurrent: ' || v_training_type.name,
+        'Automatski generisana obuka za obnovu sertifikata. Istek sertifikata između ' || 
+        (SELECT MIN(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)) || 
+        ' i ' || (SELECT MAX(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+        v_training_type.id,
+        v_start_time,
+        v_end_time,
+        v_duration_hours,
+        p_location,
+        p_airport,
+        p_capacity,
+        v_group_count,
+        '{}',
+        (SELECT MIN(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+        (SELECT MAX(expiry_date) FROM public.certificate_expiry_detailed_view WHERE certificate_id = ANY(v_certificate_ids)),
+        p_user_id,
+        true,
+        'certificate_renewal_' || p_days_before || '_days_before',
+        'Generisano automatski na osnovu sertifikata ' || CURRENT_TIMESTAMP,
+        'scheduled'
+      ) RETURNING id INTO v_current_group;
+      
+      generated_count := generated_count + 1;
+      
+      -- Dodeli zaposlene
+      FOR i IN 1..array_length(v_group_members, 1) LOOP
+        DECLARE
+          v_training_record_id uuid;
+        BEGIN
+          -- Pokušaj pronaći postojeći training record
+          SELECT tr.id INTO v_training_record_id
+          FROM public.training_records tr
+          WHERE tr.staff_id = v_group_members[i]
+            AND tr.training_type_id = v_training_type.id
+            AND tr.expiry_date = (
+              SELECT expiry_date 
+              FROM public.certificate_expiry_detailed_view 
+              WHERE certificate_id = v_certificate_ids[i]
+            )
+          LIMIT 1;
+          
+          -- Ako ne postoji, kreiraj novi
+          IF v_training_record_id IS NULL THEN
+            INSERT INTO public.training_records (
+              staff_id,
+              training_title,
+              training_type_id,
+              training_date,
+              expiry_date,
+              competency_achieved,
+              status,
+              training_hours_total,
+              location,
+              training_provider,
+              created_by,
+              created_at,
+              updated_at
+            ) VALUES (
+              v_group_members[i],
+              v_training_type.name,
+              v_training_type.id,
+              (SELECT issue_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+              (SELECT expiry_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+              true,
+              'completed',
+              v_training_type.hours_recurrent_total,
+              'Originalna lokacija',
+              'Originalni organizator',
+              p_user_id,
+              NOW(),
+              NOW()
+            ) RETURNING id INTO v_training_record_id;
+          END IF;
+          
+          -- Kreiraj dodelu
+          INSERT INTO public.schedule_assignments (
+            generated_training_id,
+            staff_id,
+            training_record_id,
+            original_expiry_date,
+            assignment_status,
+            created_at,
+            updated_at
+          ) VALUES (
+            v_current_group,
+            v_group_members[i],
+            v_training_record_id,
+            (SELECT expiry_date FROM public.certificate_expiry_detailed_view WHERE certificate_id = v_certificate_ids[i]),
+            'assigned',
+            NOW(),
+            NOW()
+          );
+          
+          assigned_count := assigned_count + 1;
+        END;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- Vrati rezultate
+  message := 'Successfully generated ' || generated_count || ' training sessions from certificates with ' || assigned_count || ' assignments';
+  
+  RETURN NEXT;
+  
+  RETURN;
+END;
+$$;
+
+COMMENT ON FUNCTION public.generate_schedule_from_certificates IS 'Generiše raspored obuka na osnovu isteka sertifikata';
+
+
+
+
+
+
+
+-- Obrišite postojeće funkcije
+DROP FUNCTION IF EXISTS get_certificates_expiring_in_year(integer);
+DROP FUNCTION IF EXISTS get_trainings_expiring_in_year(integer);
+
+-- Kreirajte funkciju za sertifikate - ISPRAVLJENA VERZIJA
+CREATE OR REPLACE FUNCTION get_certificates_expiring_in_year(p_year integer)
+RETURNS TABLE (
+  id uuid,
+  staff_id uuid,
+  first_name varchar,
+  last_name varchar,
+  training_title varchar,
+  training_type_id uuid,
+  training_type_name varchar,
+  expiry_date date,
+  airport varchar,
+  days_until_expiry integer
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    cr.id,
+    s.id as staff_id,
+    s.first_name,
+    s.last_name,
+    COALESCE(cr.training_provider, 'Sertifikat') as training_title,
+    '00000000-0000-0000-0000-000000000000'::uuid as training_type_id,
+    'Opšti'::varchar as training_type_name,
+    cr.expiry_date,
+    'Nepoznato'::varchar as airport,
+    (cr.expiry_date - CURRENT_DATE)::integer as days_until_expiry
+  FROM training_certificate_records cr
+  JOIN staff s ON cr.staff_id = s.id
+  WHERE 
+    cr.status = 'valid'
+    AND EXTRACT(YEAR FROM cr.expiry_date) = p_year::numeric
+    AND cr.expiry_date >= CURRENT_DATE
+    AND s.status = 'active'
+  ORDER BY cr.expiry_date;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Kreirajte funkciju za treninge - ISPRAVLJENA VERZIJA
+CREATE OR REPLACE FUNCTION get_trainings_expiring_in_year(p_year integer)
+RETURNS TABLE (
+  id uuid,
+  staff_id uuid,
+  first_name varchar,
+  last_name varchar,
+  training_title varchar,
+  training_type_id uuid,
+  training_type_name varchar,
+  expiry_date date,
+  airport varchar,
+  days_until_expiry integer
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    tr.id,
+    s.id as staff_id,
+    s.first_name,
+    s.last_name,
+    COALESCE(tr.training_title, 'Trening') as training_title,
+    COALESCE(tr.training_type_id, '00000000-0000-0000-0000-000000000000'::uuid) as training_type_id,
+    'Opšti trening'::varchar as training_type_name,
+    tr.expiry_date,
+    'Nepoznato'::varchar as airport,
+    (tr.expiry_date - CURRENT_DATE)::integer as days_until_expiry
+  FROM training_records tr
+  JOIN staff s ON tr.staff_id = s.id
+  WHERE 
+    tr.status = 'completed'
+    AND tr.expiry_date IS NOT NULL
+    AND EXTRACT(YEAR FROM tr.expiry_date) = p_year::numeric
+    AND tr.expiry_date >= CURRENT_DATE
+    AND s.status = 'active'
+  ORDER BY tr.expiry_date;
+END;
+$$ LANGUAGE plpgsql;
+
