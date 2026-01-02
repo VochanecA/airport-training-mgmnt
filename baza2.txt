@@ -789,6 +789,93 @@ BEGIN
 END $$;
 
 
+-- SQL funkcija za provjeru da li je zaposleni završio sve obavezne obuke
+CREATE OR REPLACE FUNCTION public.check_required_trainings_completed(
+  p_staff_id uuid,
+  p_position_id uuid DEFAULT NULL
+)
+RETURNS TABLE(
+  all_completed boolean,
+  missing_trainings_count integer,
+  missing_trainings json
+) AS $$
+DECLARE
+  v_position_id uuid;
+  v_total_required integer;
+  v_completed_count integer;
+BEGIN
+  -- Ako nije prosleđen position_id, nađi trenutnu poziciju zaposlenog
+  IF p_position_id IS NULL THEN
+    SELECT position_id INTO v_position_id 
+    FROM public.staff 
+    WHERE id = p_staff_id;
+  ELSE
+    v_position_id := p_position_id;
+  END IF;
+  
+  -- Nađi ukupan broj obaveznih obuka za poziciju
+  SELECT COUNT(*) INTO v_total_required
+  FROM public.position_required_training prt
+  WHERE prt.position_id = v_position_id
+    AND prt.is_mandatory = true;
+  
+  -- Nađi broj završenih obaveznih obuka
+  SELECT COUNT(DISTINCT tr.training_type_id) INTO v_completed_count
+  FROM public.training_records tr
+  WHERE tr.staff_id = p_staff_id
+    AND tr.status = 'completed'
+    AND tr.competency_achieved = true
+    AND tr.training_type_id IN (
+      SELECT prt.training_master_id
+      FROM public.position_required_training prt
+      WHERE prt.position_id = v_position_id
+        AND prt.is_mandatory = true
+    );
+  
+  -- Vrati rezultat
+  IF v_total_required = v_completed_count THEN
+    RETURN QUERY SELECT 
+      true AS all_completed,
+      0 AS missing_trainings_count,
+      '[]'::json AS missing_trainings;
+  ELSE
+    -- Vrati koje obuke nedostaju
+    RETURN QUERY SELECT 
+      false AS all_completed,
+      v_total_required - v_completed_count AS missing_trainings_count,
+      (
+        SELECT json_agg(json_build_object(
+          'training_type_id', prt.training_master_id,
+          'training_name', tt.name,
+          'training_code', tt.code,
+          'is_mandatory', prt.is_mandatory
+        ))
+        FROM public.position_required_training prt
+        LEFT JOIN public.training_types tt ON prt.training_master_id = tt.id
+        WHERE prt.position_id = v_position_id
+          AND prt.is_mandatory = true
+          AND prt.training_master_id NOT IN (
+            SELECT tr.training_type_id
+            FROM public.training_records tr
+            WHERE tr.staff_id = p_staff_id
+              AND tr.status = 'completed'
+              AND tr.competency_achieved = true
+          )
+      ) AS missing_trainings;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+
 
 
 
