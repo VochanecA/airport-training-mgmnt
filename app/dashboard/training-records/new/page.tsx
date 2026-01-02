@@ -1,6 +1,7 @@
+// app/dashboard/training-records/new/page.tsx
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -28,9 +29,10 @@ interface ValidationErrors {
   [key: string]: string | undefined
 }
 
-export default function NewTrainingRecordPage() {
+// Kreirajte zasebnu komponentu koja koristi useSearchParams
+function NewTrainingRecordContent() {
   const router = useRouter()
-  const searchParams = useSearchParams()
+  const searchParams = useSearchParams() // Sada je ovo unutar Suspense boundary
   const supabase = getSupabaseBrowserClient()
   
   const [loading, setLoading] = useState(false)
@@ -47,7 +49,7 @@ export default function NewTrainingRecordPage() {
   const [filteredTrainingTypes, setFilteredTrainingTypes] = useState<any[]>([])
   
   const [formData, setFormData] = useState({
-    staff_id: searchParams.get("staff_id") || "",
+    staff_id: "",
     training_title: "",
     training_type_id: "",
     training_date: "",
@@ -80,6 +82,14 @@ export default function NewTrainingRecordPage() {
     status: "completed",
     notes: "",
   })
+
+  // Postavi staff_id iz URL parametra kada se komponenta učita
+  useEffect(() => {
+    const staffIdFromParams = searchParams.get("staff_id")
+    if (staffIdFromParams) {
+      setFormData(prev => ({ ...prev, staff_id: staffIdFromParams }))
+    }
+  }, [searchParams])
 
   // Automatski izračunaj ukupne sate
   useEffect(() => {
@@ -926,5 +936,21 @@ export default function NewTrainingRecordPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// Glavna komponenta koja wrapuje u Suspense
+export default function NewTrainingRecordPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin h-12 w-12 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Učitavanje forme za novi trening...</p>
+        </div>
+      </div>
+    }>
+      <NewTrainingRecordContent />
+    </Suspense>
   )
 }

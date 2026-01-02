@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { 
   ArrowLeft, Plus, Briefcase, GraduationCap, User, Mail, Phone, Calendar,
-  X, Save, Loader2
+  X, Save, Loader2, Award
 } from "lucide-react"
 import Link from "next/link"
 
@@ -29,7 +29,11 @@ interface NewStaffFormData {
   hire_date: string
   termination_date: string
   department?: string
-  required_trainings: string[] // IDs of required training types
+  required_trainings: string[]
+  // Dodajte ova nova polja:
+  is_instructor: boolean
+  instructor_code?: string
+  instructor_specializations?: string[]
 }
 
 interface WorkingPosition {
@@ -90,6 +94,10 @@ export default function NewStaffPage() {
     termination_date: "",
     department: "",
     required_trainings: [],
+    // Dodajte ova nova polja:
+    is_instructor: false,
+    instructor_code: "",
+    instructor_specializations: [],
   })
 
   // Učitavanje radnih pozicija i tipova obuka
@@ -133,152 +141,171 @@ export default function NewStaffPage() {
     loadPositionsAndTrainings()
   }, [supabase])
 
-  
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault()
-  setError("")
-  setLoading(true)
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
 
-  try {
-    // 1. Prvo kreirajte osoblje (staff)
-    const { data: staffData, error: staffError } = await supabase
-      .from("staff")
-      .insert([{
-        employee_number: formData.employee_number,
-        first_name: formData.first_name,
-        last_name: formData.last_name,
-        email: formData.email || null,
-        phone: formData.phone || null,
-        position_id: formData.position_id || null,
-        staff_type: formData.staff_type,
-        status: formData.status,
-        hire_date: formData.hire_date,
-        termination_date: formData.termination_date || null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }])
-      .select()
+    try {
+      // 1. Prvo kreirajte osoblje (staff)
+      const { data: staffData, error: staffError } = await supabase
+        .from("staff")
+        .insert([{
+          employee_number: formData.employee_number,
+          first_name: formData.first_name,
+          last_name: formData.last_name,
+          email: formData.email || null,
+          phone: formData.phone || null,
+          position_id: formData.position_id || null,
+          staff_type: formData.staff_type,
+          status: formData.status,
+          hire_date: formData.hire_date,
+          termination_date: formData.termination_date || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }])
+        .select()
 
-    if (staffError) {
-      console.error("Error creating staff:", staffError)
-      throw staffError
-    }
+      if (staffError) {
+        console.error("Error creating staff:", staffError)
+        throw staffError
+      }
 
-    const staffId = staffData?.[0]?.id
-    if (!staffId) throw new Error("Failed to create staff member")
+      const staffId = staffData?.[0]?.id
+      if (!staffId) throw new Error("Failed to create staff member")
 
-    // 2. Dodajte zahteve za obuke za poziciju (samo ako je pozicija izabrana)
-    if (formData.position_id && formData.required_trainings.length > 0) {
-      // Dodajte ovu funkciju da provjerite i dobijete training_master_id
-      const getTrainingMasterId = async (trainingTypeId: string): Promise<string | null> => {
-        try {
-          // Prvo provjerite da li postoji master zapis za ovaj training_type
-          const { data: existingMaster, error } = await supabase
-            .from("training_certificates_master")
-            .select("id")
-            .eq("type_id", trainingTypeId)
-            .maybeSingle()
+      // 2. Ako je označen kao instruktor, kreirajte i instruktora
+      if (formData.is_instructor) {
+        const instructorData = {
+          staff_id: staffId,
+          instructor_code: formData.instructor_code || 
+            `INST-${formData.employee_number}`,
+          specializations: formData.instructor_specializations || [],
+          status: "active",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
 
-          if (error) {
-            console.error("Error checking master:", error)
-            return null
-          }
+        const { error: instructorError } = await supabase
+          .from("instructors")
+          .insert([instructorData])
 
-          if (existingMaster) {
-            return existingMaster.id
-          }
-
-          // Ako ne postoji, kreirajte ga
-          // Prvo dobijte podatke o training_type
-          const { data: trainingType, error: typeError } = await supabase
-            .from("training_types")
-            .select("*")
-            .eq("id", trainingTypeId)
-            .single()
-
-          if (typeError) {
-            console.error("Error getting training type:", typeError)
-            return null
-          }
-
-          // Kreirajte master zapis
-          const { data: newMaster, error: createError } = await supabase
-            .from("training_certificates_master")
-            .insert([{
-              code: trainingType.code,
-              title: trainingType.name,
-              description: trainingType.description,
-              duration_hours: trainingType.hours_initial_total || 0,
-              validity_months: trainingType.validity_period_months ? Math.round(trainingType.validity_period_months) : null,
-              is_mandatory: trainingType.is_mandatory || true,
-              is_active: trainingType.is_active,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }])
-            .select()
-            .single()
-
-          if (createError) {
-            console.error("Error creating master:", createError)
-            return null
-          }
-
-          // Update master sa type_id
-          await supabase
-            .from("training_certificates_master")
-            .update({ type_id: trainingTypeId })
-            .eq("id", newMaster.id)
-
-          return newMaster.id
-        } catch (err) {
-          console.error("Error in getTrainingMasterId:", err)
-          return null
+        if (instructorError) {
+          console.error("Error creating instructor:", instructorError)
+          // Ne bacajte grešku, samo logujte - osoblje je već kreirano
         }
       }
 
-      // Dobijte master ID-jeve za sve odabrane treninge
-      const masterRequirements = []
-      
-      for (const trainingTypeId of formData.required_trainings) {
-        const masterId = await getTrainingMasterId(trainingTypeId)
+      // 3. Dodajte zahteve za obuke za poziciju (samo ako je pozicija izabrana)
+      if (formData.position_id && formData.required_trainings.length > 0) {
+        // Dodajte ovu funkciju da provjerite i dobijete training_master_id
+        const getTrainingMasterId = async (trainingTypeId: string): Promise<string | null> => {
+          try {
+            // Prvo provjerite da li postoji master zapis za ovaj training_type
+            const { data: existingMaster, error } = await supabase
+              .from("training_certificates_master")
+              .select("id")
+              .eq("type_id", trainingTypeId)
+              .maybeSingle()
+
+            if (error) {
+              console.error("Error checking master:", error)
+              return null
+            }
+
+            if (existingMaster) {
+              return existingMaster.id
+            }
+
+            // Ako ne postoji, kreirajte ga
+            // Prvo dobijte podatke o training_type
+            const { data: trainingType, error: typeError } = await supabase
+              .from("training_types")
+              .select("*")
+              .eq("id", trainingTypeId)
+              .single()
+
+            if (typeError) {
+              console.error("Error getting training type:", typeError)
+              return null
+            }
+
+            // Kreirajte master zapis
+            const { data: newMaster, error: createError } = await supabase
+              .from("training_certificates_master")
+              .insert([{
+                code: trainingType.code,
+                title: trainingType.name,
+                description: trainingType.description,
+                duration_hours: trainingType.hours_initial_total || 0,
+                validity_months: trainingType.validity_period_months ? Math.round(trainingType.validity_period_months) : null,
+                is_mandatory: trainingType.is_mandatory || true,
+                is_active: trainingType.is_active,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }])
+              .select()
+              .single()
+
+            if (createError) {
+              console.error("Error creating master:", createError)
+              return null
+            }
+
+            // Update master sa type_id
+            await supabase
+              .from("training_certificates_master")
+              .update({ type_id: trainingTypeId })
+              .eq("id", newMaster.id)
+
+            return newMaster.id
+          } catch (err) {
+            console.error("Error in getTrainingMasterId:", err)
+            return null
+          }
+        }
+
+        // Dobijte master ID-jeve za sve odabrane treninge
+        const masterRequirements = []
         
-        if (masterId) {
-          masterRequirements.push({
-            position_id: formData.position_id,
-            training_master_id: masterId, // Koristimo training_master_id
-            is_mandatory: true,
-            created_at: new Date().toISOString()
-            // NEMA updated_at polje!
-          })
+        for (const trainingTypeId of formData.required_trainings) {
+          const masterId = await getTrainingMasterId(trainingTypeId)
+          
+          if (masterId) {
+            masterRequirements.push({
+              position_id: formData.position_id,
+              training_master_id: masterId,
+              is_mandatory: true,
+              created_at: new Date().toISOString()
+            })
+          }
+        }
+
+        if (masterRequirements.length > 0) {
+          const { error: requirementsError } = await supabase
+            .from("position_required_training")
+            .insert(masterRequirements)
+
+          if (requirementsError) {
+            console.error("Error adding training requirements:", requirementsError)
+          }
         }
       }
 
-      if (masterRequirements.length > 0) {
-        const { error: requirementsError } = await supabase
-          .from("position_required_training")
-          .insert(masterRequirements)
-
-        if (requirementsError) {
-          console.error("Error adding training requirements:", requirementsError)
-          // Ne bacajte grešku, samo logujte
-        }
+      // 4. Preusmerite na listu zaposlenih
+      router.push("/dashboard/employees")
+      router.refresh()
+    } catch (err: unknown) {
+      console.error("Full error:", err)
+      if (err instanceof Error) {
+        setError(err.message || "Došlo je do greške pri čuvanju zaposlenog")
+      } else {
+        setError("Došlo je do nepoznate greške pri čuvanju zaposlenog")
       }
+    } finally {
+      setLoading(false)
     }
-
-    // 3. Preusmerite na listu zaposlenih
-    router.push("/dashboard/employees")
-    router.refresh()
-  } catch (err: unknown) {
-    console.error("Full error:", err)
-    if (err instanceof Error) {
-      setError(err.message || "Došlo je do greške pri čuvanju zaposlenog")
-    } else {
-      setError("Došlo je do nepoznate greške pri čuvanju zaposlenog")
-    }
-  } finally {
-    setLoading(false)
   }
-}
 
   // Funkcija za kreiranje nove pozicije
   const handleCreateNewPosition = async () => {
@@ -359,39 +386,13 @@ const handleSubmit = async (e: React.FormEvent) => {
     })
   }
 
-  // Grupiši obuke po kategoriji za bolju organizaciju
-  const trainingsByCategory = trainingTypes.reduce((acc, training) => {
-    const category = training.category || 'other'
-    if (!acc[category]) {
-      acc[category] = []
-    }
-    acc[category].push(training)
-    return acc
-  }, {} as Record<string, TrainingType[]>)
-
-  // Prevedi kategorije na srpski
-  const getCategoryLabel = (category: string) => {
-    const labels: Record<string, string> = {
-      'safety': 'Bezbednost',
-      'technical': 'Tehnička',
-      'operational': 'Operativna',
-      'administrative': 'Administrativna',
-      'customer_service': 'Usluga putnicima',
-      'management': 'Menadžment',
-      'other': 'Ostalo'
-    }
-    return labels[category] || category
-  }
-
   // Generiši kod pozicije na osnovu naziva
   const generatePositionCode = (title: string) => {
     if (!title.trim()) return ""
     
-    // Izdvoj prva slova svake riječi i pretvori u velika slova
     const words = title.split(' ')
     const initials = words.map(word => word.charAt(0).toUpperCase()).join('')
     
-    // Dodaj broj ako već postoji pozicija sa sličnim kodom
     const existingCodes = workingPositions.map(p => p.code)
     let code = initials
     let counter = 1
@@ -402,6 +403,12 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
     
     return code
+  }
+
+  // Automatski generiši kod instruktora
+  const generateInstructorCode = () => {
+    const initials = `${formData.first_name[0] || ''}${formData.last_name[0] || ''}`.toUpperCase()
+    return `INST-${initials}-${formData.employee_number}`
   }
 
   return (
@@ -714,10 +721,100 @@ const handleSubmit = async (e: React.FormEvent) => {
                   </Select>
                 </div>
               </div>
+
+              {/* Sekcija za instruktora */}
+              <div className="pt-6 border-t">
+                <div className="flex items-center gap-2 mb-4">
+                  <Award className="h-5 w-5" />
+                  <h3 className="text-lg font-semibold">Instruktor</h3>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="is_instructor"
+                      checked={formData.is_instructor}
+                      onCheckedChange={(checked) => 
+                        setFormData({ ...formData, is_instructor: checked === true })
+                      }
+                      disabled={loading}
+                    />
+                    <Label htmlFor="is_instructor" className="text-sm font-medium">
+                      Ovaj zaposleni je instruktor
+                    </Label>
+                  </div>
+
+                  {formData.is_instructor && (
+                    <div className="space-y-4 pl-6 border-l-2 border-blue-200">
+                      <div className="space-y-2">
+                        <Label htmlFor="instructor_code">Kod instruktora</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="instructor_code"
+                            value={formData.instructor_code}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => 
+                              setFormData({ ...formData, instructor_code: e.target.value })
+                            }
+                            disabled={loading}
+                            placeholder="INST-KOD"
+                            className="font-mono"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              const generatedCode = generateInstructorCode()
+                              setFormData(prev => ({ ...prev, instructor_code: generatedCode }))
+                            }}
+                            disabled={!formData.first_name || !formData.last_name}
+                          >
+                            Generiši
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Jedinstveni identifikacioni kod za instruktora
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Specijalizacije instruktora</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {['Bezbednost', 'Tehnički trening', 'Operacije', 'Usluga putnicima', 'Menadžment', 'Hitne situacije', 'Sigurnost', 'Avijacija'].map((spec) => (
+                            <div key={spec} className="flex items-center space-x-1">
+                              <Checkbox
+                                id={`spec-${spec}`}
+                                checked={formData.instructor_specializations?.includes(spec) || false}
+                                onCheckedChange={(checked) => {
+                                  const current = formData.instructor_specializations || []
+                                  if (checked) {
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      instructor_specializations: [...current, spec]
+                                    }))
+                                  } else {
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      instructor_specializations: current.filter(s => s !== spec)
+                                    }))
+                                  }
+                                }}
+                                disabled={loading}
+                              />
+                              <Label htmlFor={`spec-${spec}`} className="text-sm">
+                                {spec}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
 
-          {/* Informacije o poziciji i obukama */}
+          {/* Desna kolona - Pozicija i obuke */}
           <div className="space-y-6">
             <Card>
               <CardHeader>
@@ -739,7 +836,6 @@ const handleSubmit = async (e: React.FormEvent) => {
                           setFormData({ ...formData, position_id: value, required_trainings: [] })
                         }
                         disabled={loading}
-                        // className="flex-1"
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Izaberite poziciju" />
@@ -784,6 +880,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               </CardContent>
             </Card>
 
+            {/* Obavezne obuke - ovo možete skratiti ili ukloniti ako je previše */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -791,59 +888,21 @@ const handleSubmit = async (e: React.FormEvent) => {
                   Obavezne Obuke za Poziciju
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {loadingData ? (
-                  <div className="text-sm text-muted-foreground text-center py-4">
-                    Učitavanje tipova obuka...
-                  </div>
-                ) : !formData.position_id ? (
+              <CardContent>
+                {!formData.position_id ? (
                   <div className="text-sm text-muted-foreground text-center py-4">
                     Izaberite poziciju da biste videli obavezne obuke
                   </div>
-                ) : trainingTypes.length === 0 ? (
-                  <div className="text-sm text-muted-foreground text-center py-4">
-                    Nema dostupnih tipova obuka
-                  </div>
                 ) : (
-                  <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                    {Object.entries(trainingsByCategory).map(([category, trainings]) => (
-                      <div key={category} className="space-y-2">
-                        <h4 className="text-sm font-medium text-gray-700">
-                          {getCategoryLabel(category)}
-                        </h4>
-                        <div className="space-y-2">
-                          {trainings.map((training) => (
-                            <div key={training.id} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`training-${training.id}`}
-                                checked={formData.required_trainings.includes(training.id)}
-                                onCheckedChange={() => handleTrainingToggle(training.id)}
-                                disabled={loading}
-                              />
-                              <Label
-                                htmlFor={`training-${training.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                <div className="flex flex-col">
-                                  <span className="font-medium">{training.name}</span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {training.code} • {training.is_mandatory ? 'Obavezna' : 'Preporučena'}
-                                  </span>
-                                </div>
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {formData.required_trainings.length > 0 && (
-                  <div className="pt-4 border-t">
+                  <div className="space-y-2">
                     <div className="text-sm text-muted-foreground">
-                      Izabrano: {formData.required_trainings.length} obuka
+                      Obavezne obuke se podešavaju na stranici za pozicije.
                     </div>
+                    <Link href={`/dashboard/positions/${formData.position_id}/edit`}>
+                      <Button variant="outline" size="sm" className="w-full">
+                        Podesi obuke za poziciju
+                      </Button>
+                    </Link>
                   </div>
                 )}
               </CardContent>
