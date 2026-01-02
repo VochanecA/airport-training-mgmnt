@@ -240,6 +240,12 @@ export default async function EmployeeDetailsPage({
               Dodaj Obuku
             </Button>
           </Link>
+          <Link href={`/dashboard/employees/${employee.id}/training`}>
+  <Button variant="outline" className="gap-2">
+    <GraduationCap className="h-4 w-4" />
+    Trening Evidencija
+  </Button>
+</Link>
         </div>
       </div>
 

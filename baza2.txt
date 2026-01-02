@@ -325,6 +325,472 @@ ALTER TABLE position_required_training
 ALTER TABLE public.training_certificate_records 
 ADD COLUMN issued_by character varying;
 
+training_records_implementation.sql
+-- ============================================================================
+-- IMPLEMENTACIJA 8.2 RECORDS IDENTIFICATION
+-- All theoretical, practical, on-the-job training documentation
+-- ============================================================================
+
+-- Enable UUID extension (ako već nije omogućeno)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================================================
+-- STEP 1: Create main training_records table
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.training_records (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  
+  -- 8.2.a Trainee name and unique id number
+  staff_id uuid NOT NULL,
+  
+  -- 8.2.b Subject/title of training
+  training_title character varying NOT NULL,
+  training_type_id uuid,
+  training_master_id uuid,
+  
+  -- 8.2.c Training date and validity
+  training_date date NOT NULL,
+  training_end_date date,
+  validity_months integer,
+  expiry_date date,
+  
+  -- 8.2.d Competency achieved
+  competency_achieved boolean DEFAULT false,
+  competency_level character varying,
+  competency_notes text,
+  
+  -- 8.2.e Passing score
+  passing_score integer,
+  actual_score numeric,
+  score_type character varying,
+  
+  -- 8.2.f Name of trainer
+  trainer_id uuid,
+  trainer_name character varying,
+  
+  -- 8.2.g & 8.2.h Signatures (when paper-based)
+  trainer_signature_date date,
+  trainee_signature_date date,
+  signature_notes text,
+  has_paper_signatures boolean DEFAULT false,
+  
+  -- Additional completion fields
+  training_hours_theory numeric DEFAULT 0,
+  training_hours_practical numeric DEFAULT 0,
+  training_hours_ojt numeric DEFAULT 0,
+  training_hours_total numeric DEFAULT 0,
+  
+  training_method character varying CHECK (training_method IN (
+    'classroom', 'online', 'ojt', 'practical', 'simulation', 'workshop', 'blended'
+  )),
+  
+  location character varying,
+  training_provider character varying,
+  
+  status character varying DEFAULT 'planned' CHECK (status IN (
+    'planned', 'in_progress', 'completed', 'cancelled', 'failed'
+  )),
+  
+  notes text,
+  attachments text[],
+  
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  updated_by uuid,
+  
+  -- Primary key and constraints
+  CONSTRAINT training_records_pkey PRIMARY KEY (id),
+  
+  -- Foreign keys
+  CONSTRAINT training_records_staff_id_fkey FOREIGN KEY (staff_id) 
+    REFERENCES public.staff(id) ON DELETE CASCADE,
+  CONSTRAINT training_records_training_type_id_fkey FOREIGN KEY (training_type_id) 
+    REFERENCES public.training_types(id),
+  CONSTRAINT training_records_training_master_id_fkey FOREIGN KEY (training_master_id) 
+    REFERENCES public.training_certificates_master(id),
+  CONSTRAINT training_records_trainer_id_fkey FOREIGN KEY (trainer_id) 
+    REFERENCES public.instructors(id),
+  CONSTRAINT training_records_created_by_fkey FOREIGN KEY (created_by) 
+    REFERENCES public.staff(id),
+  CONSTRAINT training_records_updated_by_fkey FOREIGN KEY (updated_by) 
+    REFERENCES public.staff(id),
+  
+  -- Data validation
+  CONSTRAINT training_records_valid_score CHECK (
+    (score_type = 'percentage' AND actual_score BETWEEN 0 AND 100) OR
+    (score_type = 'pass/fail' AND actual_score IN (0, 100)) OR
+    (score_type = 'points' AND actual_score >= 0) OR
+    (score_type IS NULL)
+  ),
+  CONSTRAINT training_records_valid_dates CHECK (
+    training_end_date IS NULL OR training_end_date >= training_date
+  ),
+  CONSTRAINT training_records_valid_passing_score CHECK (
+    passing_score IS NULL OR passing_score BETWEEN 0 AND 100
+  )
+);
+
+COMMENT ON TABLE public.training_records IS 'Evidencija svih vrsta treninga (teorija, praksa, OJT) prema zahtjevima 8.2 Records Identification';
+
+-- ============================================================================
+-- STEP 2: Create function to calculate expiry date
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.calculate_training_expiry()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Calculate expiry date based on validity months
+  IF NEW.validity_months IS NOT NULL AND NEW.training_date IS NOT NULL THEN
+    NEW.expiry_date := NEW.training_date + (NEW.validity_months || ' months')::interval;
+  ELSE
+    NEW.expiry_date := NULL;
+  END IF;
+  
+  -- Auto-calculate total training hours
+  IF NEW.training_hours_total IS NULL THEN
+    NEW.training_hours_total := 
+      COALESCE(NEW.training_hours_theory, 0) + 
+      COALESCE(NEW.training_hours_practical, 0) + 
+      COALESCE(NEW.training_hours_ojt, 0);
+  END IF;
+  
+  -- Set paper signatures flag
+  IF NEW.trainer_signature_date IS NOT NULL OR NEW.trainee_signature_date IS NOT NULL THEN
+    NEW.has_paper_signatures := true;
+  END IF;
+  
+  -- Auto-update updated_at timestamp
+  NEW.updated_at := now();
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- STEP 3: Create trigger for expiry calculation
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS trg_calculate_training_expiry ON public.training_records;
+CREATE TRIGGER trg_calculate_training_expiry
+  BEFORE INSERT OR UPDATE ON public.training_records
+  FOR EACH ROW
+  EXECUTE FUNCTION public.calculate_training_expiry();
+
+-- ============================================================================
+-- STEP 4: Create indexes for performance
+-- ============================================================================
+
+-- Foreign key indexes
+CREATE INDEX IF NOT EXISTS idx_training_records_staff_id 
+  ON public.training_records(staff_id);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_training_type_id 
+  ON public.training_records(training_type_id);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_trainer_id 
+  ON public.training_records(trainer_id);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_created_by 
+  ON public.training_records(created_by);
+
+-- Query optimization indexes
+CREATE INDEX IF NOT EXISTS idx_training_records_training_date 
+  ON public.training_records(training_date);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_expiry_date 
+  ON public.training_records(expiry_date);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_status 
+  ON public.training_records(status);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_competency_achieved 
+  ON public.training_records(competency_achieved);
+
+-- Composite indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_training_records_staff_status 
+  ON public.training_records(staff_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_training_records_date_range 
+  ON public.training_records(training_date, expiry_date);
+
+-- ============================================================================
+-- STEP 5: Create view for easy access to 8.2 required data
+-- ============================================================================
+
+CREATE OR REPLACE VIEW public.training_records_8_2_view AS
+SELECT 
+  -- 8.2.a Trainee name and unique id number
+  s.employee_number AS "Trainee Unique ID",
+  s.first_name || ' ' || s.last_name AS "Trainee Name",
+  
+  -- 8.2.b Subject/title of training
+  tr.training_title AS "Training Subject/Title",
+  tt.name AS "Training Type",
+  
+  -- 8.2.c Training date and validity
+  tr.training_date AS "Training Date",
+  tr.training_end_date AS "Training End Date",
+  tr.validity_months AS "Validity Period (months)",
+  tr.expiry_date AS "Expiry Date",
+  
+  -- 8.2.d Competency achieved
+  tr.competency_achieved AS "Competency Achieved",
+  tr.competency_level AS "Competency Level",
+  
+  -- 8.2.e Passing score
+  tr.passing_score AS "Passing Score (%)",
+  tr.actual_score AS "Actual Score",
+  tr.score_type AS "Score Type",
+  
+  -- 8.2.f Name of trainer
+  COALESCE(
+    i_staff.first_name || ' ' || i_staff.last_name,
+    tr.trainer_name
+  ) AS "Trainer Name",
+  
+  -- Signatures (8.2.g & 8.2.h)
+  tr.trainer_signature_date AS "Trainer Signature Date",
+  tr.trainee_signature_date AS "Trainee Signature Date",
+  tr.has_paper_signatures AS "Has Paper Signatures",
+  
+  -- Additional useful information
+  tr.training_method AS "Training Method",
+  tr.location AS "Location",
+  tr.training_provider AS "Training Provider",
+  tr.training_hours_theory AS "Theory Hours",
+  tr.training_hours_practical AS "Practical Hours",
+  tr.training_hours_ojt AS "OJT Hours",
+  tr.training_hours_total AS "Total Hours",
+  tr.status AS "Status",
+  tr.notes AS "Notes",
+  
+  -- Metadata
+  tr.created_at AS "Record Created",
+  tr.updated_at AS "Last Updated"
+  
+FROM public.training_records tr
+LEFT JOIN public.staff s ON tr.staff_id = s.id
+LEFT JOIN public.training_types tt ON tr.training_type_id = tt.id
+LEFT JOIN public.instructors i ON tr.trainer_id = i.id
+LEFT JOIN public.staff i_staff ON i.staff_id = i_staff.id
+WHERE tr.status IN ('completed', 'in_progress')
+ORDER BY tr.training_date DESC;
+
+COMMENT ON VIEW public.training_records_8_2_view IS 'View containing all data required by 8.2 Records Identification';
+
+-- ============================================================================
+-- STEP 6: Create function to check if training is valid/expired
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.get_training_status_info(
+  p_training_record_id uuid
+)
+RETURNS TABLE(
+  record_id uuid,
+  staff_name text,
+  training_title text,
+  training_date date,
+  expiry_date date,
+  is_valid boolean,
+  days_until_expiry integer,
+  status text
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    tr.id,
+    s.first_name || ' ' || s.last_name,
+    tr.training_title,
+    tr.training_date,
+    tr.expiry_date,
+    CASE 
+      WHEN tr.expiry_date IS NULL THEN true
+      WHEN tr.expiry_date >= CURRENT_DATE THEN true
+      ELSE false
+    END AS is_valid,
+    CASE 
+      WHEN tr.expiry_date IS NULL THEN NULL
+      ELSE tr.expiry_date - CURRENT_DATE
+    END AS days_until_expiry,
+    tr.status
+  FROM public.training_records tr
+  JOIN public.staff s ON tr.staff_id = s.id
+  WHERE tr.id = p_training_record_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- STEP 7: Create audit table for tracking changes (optional but recommended)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.training_records_audit (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  training_record_id uuid NOT NULL,
+  changed_by uuid,
+  changed_at timestamp with time zone DEFAULT now(),
+  change_type varchar(20) CHECK (change_type IN ('CREATE', 'UPDATE', 'DELETE')),
+  field_name varchar(100),
+  old_value text,
+  new_value text,
+  
+  CONSTRAINT training_records_audit_pkey PRIMARY KEY (id),
+  CONSTRAINT training_records_audit_training_record_id_fkey 
+    FOREIGN KEY (training_record_id) 
+    REFERENCES public.training_records(id) ON DELETE CASCADE,
+  CONSTRAINT training_records_audit_changed_by_fkey 
+    FOREIGN KEY (changed_by) 
+    REFERENCES public.staff(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_training_audit_record_id 
+  ON public.training_records_audit(training_record_id);
+
+CREATE INDEX IF NOT EXISTS idx_training_audit_changed_at 
+  ON public.training_records_audit(changed_at);
+
+-- ============================================================================
+-- STEP 8: Create trigger for audit logging
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.log_training_record_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO public.training_records_audit 
+      (training_record_id, change_type, changed_by)
+    VALUES (NEW.id, 'CREATE', NEW.created_by);
+    
+  ELSIF TG_OP = 'UPDATE' THEN
+    INSERT INTO public.training_records_audit 
+      (training_record_id, change_type, changed_by, field_name, old_value, new_value)
+    SELECT 
+      NEW.id,
+      'UPDATE',
+      NEW.updated_by,
+      key,
+      old_val,
+      new_val
+    FROM jsonb_each_text(to_jsonb(OLD)) AS old_data(key, old_val)
+    JOIN jsonb_each_text(to_jsonb(NEW)) AS new_data(key, new_val)
+    ON old_data.key = new_data.key
+    WHERE old_data.value IS DISTINCT FROM new_data.value;
+    
+  ELSIF TG_OP = 'DELETE' THEN
+    INSERT INTO public.training_records_audit 
+      (training_record_id, change_type)
+    VALUES (OLD.id, 'DELETE');
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_audit_training_records ON public.training_records;
+CREATE TRIGGER trg_audit_training_records
+  AFTER INSERT OR UPDATE OR DELETE ON public.training_records
+  FOR EACH ROW
+  EXECUTE FUNCTION public.log_training_record_changes();
+
+-- ============================================================================
+-- STEP 9: Create function to generate training summary report
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.generate_training_summary_report(
+  p_start_date date DEFAULT NULL,
+  p_end_date date DEFAULT NULL,
+  p_department varchar DEFAULT NULL
+)
+RETURNS TABLE(
+  employee_number varchar,
+  employee_name text,
+  position varchar,
+  total_trainings bigint,
+  completed_trainings bigint,
+  total_hours numeric,
+  avg_score numeric,
+  competencies_achieved bigint
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    s.employee_number,
+    s.first_name || ' ' || s.last_name AS employee_name,
+    wp.title AS position,
+    COUNT(tr.id) AS total_trainings,
+    COUNT(CASE WHEN tr.status = 'completed' THEN 1 END) AS completed_trainings,
+    COALESCE(SUM(tr.training_hours_total), 0) AS total_hours,
+    AVG(tr.actual_score) FILTER (WHERE tr.score_type = 'percentage') AS avg_score,
+    COUNT(CASE WHEN tr.competency_achieved = true THEN 1 END) AS competencies_achieved
+  FROM public.staff s
+  LEFT JOIN public.working_positions wp ON s.position_id = wp.id
+  LEFT JOIN public.training_records tr ON s.id = tr.staff_id
+    AND (p_start_date IS NULL OR tr.training_date >= p_start_date)
+    AND (p_end_date IS NULL OR tr.training_date <= p_end_date)
+  WHERE p_department IS NULL OR wp.department = p_department
+    AND s.status = 'active'
+  GROUP BY s.id, s.employee_number, s.first_name, s.last_name, wp.title
+  ORDER BY s.last_name, s.first_name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- STEP 10: Create function to get expiring trainings
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.get_expiring_trainings(
+  p_days_threshold integer DEFAULT 30
+)
+RETURNS TABLE(
+  record_id uuid,
+  staff_name text,
+  training_title text,
+  expiry_date date,
+  days_remaining integer,
+  staff_email varchar
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    tr.id,
+    s.first_name || ' ' || s.last_name AS staff_name,
+    tr.training_title,
+    tr.expiry_date,
+    tr.expiry_date - CURRENT_DATE AS days_remaining,
+    s.email
+  FROM public.training_records tr
+  JOIN public.staff s ON tr.staff_id = s.id
+  WHERE tr.status = 'completed'
+    AND tr.expiry_date IS NOT NULL
+    AND tr.expiry_date >= CURRENT_DATE
+    AND tr.expiry_date <= CURRENT_DATE + (p_days_threshold || ' days')::interval
+  ORDER BY tr.expiry_date;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- SUCCESS MESSAGE
+-- ============================================================================
+
+DO $$ 
+BEGIN
+  RAISE NOTICE '============================================';
+  RAISE NOTICE '8.2 RECORDS IDENTIFICATION IMPLEMENTED';
+  RAISE NOTICE '============================================';
+  RAISE NOTICE 'Created: training_records table';
+  RAISE NOTICE 'Created: training_records_audit table';
+  RAISE NOTICE 'Created: calculate_training_expiry trigger';
+  RAISE NOTICE 'Created: log_training_record_changes trigger';
+  RAISE NOTICE 'Created: 9 performance indexes';
+  RAISE NOTICE 'Created: training_records_8_2_view view';
+  RAISE NOTICE 'Created: 3 utility functions';
+  RAISE NOTICE '============================================';
+END $$;
+
+
+
+
 
 
   ***NOVA KOMPLET***

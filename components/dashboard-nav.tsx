@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth-provider"
-import { GraduationCap, Users, Briefcase, Award, Clock, Calendar, BarChart3, LogOut, Menu, Layers } from "lucide-react"
+import { GraduationCap, Users, Briefcase, Award, Clock, Calendar, BarChart3, LogOut, Menu, Layers, UserCircle } from "lucide-react"
 import { useState } from "react"
 import { Sheet, SheetContent, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -15,6 +15,7 @@ const navigation = [
   { name: "Tipovi Obuka", href: "/dashboard/training-types", icon: Layers },
   { name: "Predavanja i Obuke", href: "/dashboard/trainings", icon: GraduationCap },
   { name: "Radne Pozicije", href: "/dashboard/positions", icon: Briefcase },
+  { name: "Instruktori", href: "/dashboard/instructors", icon: UserCircle },
   { name: "Zaposleni", href: "/dashboard/employees", icon: Users },
   { name: "Sertifikati", href: "/dashboard/certificates", icon: Award },
   { name: "Istek Obuka", href: "/dashboard/training-expiry", icon: Clock },
@@ -42,7 +43,6 @@ export function DashboardNav() {
     // Fallback: if still on dashboard after 1 second, force redirect
     setTimeout(() => {
       if (window.location.pathname.startsWith('/dashboard')) {
-        // window.location.href = '/login'
         window.location.href = '/'
       }
     }, 1000)
@@ -138,7 +138,6 @@ export function DashboardNav() {
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-64 p-0">
-            {/* Dodajte SheetTitle za accessibility - ali sakrijte ga vizuelno */}
             <SheetTitle className="sr-only">Navigacija</SheetTitle>
             <SheetDescription className="sr-only">
               Glavni meni za Airport Training Management sistem
