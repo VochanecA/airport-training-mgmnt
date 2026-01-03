@@ -37,6 +37,8 @@ const navigation: NavigationItem[] = [
   { name: "Istek Potvrda i Obuka", href: "/dashboard/schedule/expiries", icon: AlertCircle }, 
   { separator: true },  
   { name: "Plana Rada", href: "/dashboard/work-schedule", icon: Calendar, color: 'orange' },
+    { separator: true },  
+  { name: "Statistika", href: "/dashboard/statistics", icon: BarChart3 },
 ]
 
 export function DashboardNav() {
